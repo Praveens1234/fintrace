@@ -8,6 +8,7 @@ import com.example.data.model.PriceTick
 import com.example.data.model.SymbolInfo
 import com.example.data.model.SymbolState
 import com.example.data.model.TriggerHistory
+import com.example.data.provider.PriceProvider
 import com.example.data.repository.PriceMonitorManager
 import com.example.service.NotificationHelper
 import com.example.service.PriceTrackerService
@@ -36,6 +37,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val priceState: StateFlow<Map<String, PriceTick>> = monitor.priceState
     val connectionStatus: StateFlow<String> = monitor.connectionStatus
     val latencyMs: StateFlow<Long> = monitor.latencyMs
+
+    // Market session state for the UI (closed banners, "opens in …" countdown).
+    val marketOpen: StateFlow<Boolean> = monitor.marketOpen
+    val nextMarketChangeAt: StateFlow<Long> = monitor.nextMarketChangeAt
 
     // Live Alert List Flow
     val alertList: StateFlow<List<Alert>> = alertDao.getAllAlertsFlow()
@@ -129,6 +134,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _prioritySoundModes = MutableStateFlow<Map<String, String>>(emptyMap())
     val prioritySoundModes = _prioritySoundModes.asStateFlow()
 
+    private val _activeProvider = MutableStateFlow(PriceProvider.TWELVE_DATA.name)
+    val activeProvider: StateFlow<String> = _activeProvider.asStateFlow()
+
+    private val _finnhubApiKey = MutableStateFlow("")
+    val finnhubApiKey: StateFlow<String> = _finnhubApiKey.asStateFlow()
+
+    private val _alphaVantageApiKey = MutableStateFlow("")
+    val alphaVantageApiKey: StateFlow<String> = _alphaVantageApiKey.asStateFlow()
+
+    private val _ttsLanguage = MutableStateFlow("en-US")
+    val ttsLanguage: StateFlow<String> = _ttsLanguage.asStateFlow()
+
     init {
         // Start background FGS automatically on launch
         PriceTrackerService.start(application)
@@ -191,6 +208,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _prioritySoundTitles.value = pTitles
             _priorityRingDurations.value = pDurations
             _prioritySoundModes.value = pModes
+            _activeProvider.value = monitor.getSetting("active_price_provider") ?: PriceProvider.TWELVE_DATA.name
+            _finnhubApiKey.value = monitor.getSetting("finnhub_api_key") ?: ""
+            _alphaVantageApiKey.value = monitor.getSetting("alpha_vantage_api_key") ?: ""
+            val ttsLang = monitor.getSetting("tts_language") ?: "en-US"
+            _ttsLanguage.value = ttsLang
+            withContext(Dispatchers.Main) {
+                com.example.service.AlertSoundPlayer.updateTtsLocale(ttsLang, application)
+            }
         }
     }
 
@@ -316,6 +341,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ── SETTINGS MUTATORS ─────────────────────────────────────────────────
+    // Saves the Twelve Data API key (used by the default price provider).
     fun saveApiKey(key: String) {
         viewModelScope.launch(Dispatchers.IO) {
             _apiKey.value = key
@@ -527,6 +553,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             _prioritySoundModes.update { it + (p to mode) }
             monitor.saveSetting("alert_sound_mode_$p", mode)
+        }
+    }
+
+    fun saveActiveProvider(providerName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _activeProvider.value = providerName
+            monitor.saveSetting("active_price_provider", providerName)
+            monitor.logEvent("SYSTEM", null, "Price provider changed to: $providerName")
+        }
+    }
+
+    fun saveFinnhubApiKey(key: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _finnhubApiKey.value = key
+            monitor.saveSetting("finnhub_api_key", key)
+        }
+    }
+
+    fun saveAlphaVantageApiKey(key: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _alphaVantageApiKey.value = key
+            monitor.saveSetting("alpha_vantage_api_key", key)
+        }
+    }
+
+    fun saveTtsLanguage(lang: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _ttsLanguage.value = lang
+            monitor.saveSetting("tts_language", lang)
+            withContext(Dispatchers.Main) {
+                com.example.service.AlertSoundPlayer.updateTtsLocale(lang, getApplication())
+            }
         }
     }
 

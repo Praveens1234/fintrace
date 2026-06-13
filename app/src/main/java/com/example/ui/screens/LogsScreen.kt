@@ -272,9 +272,9 @@ fun TerminalContent(
         // High quality telemetry register header with blinking live heart-beat dot
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = if (isLight) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) else Color(0xFF101317),
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Row(
                 modifier = Modifier
@@ -805,106 +805,94 @@ fun TerminalContent(
 
 @Composable
 fun LogRecordRow(log: AppLog, timeStr: String, index: Int) {
-    val isSimulated = log.type == "TICK" && (log.message.contains("simulated", ignoreCase = true) || !log.message.contains("live", ignoreCase = true))
     val isLight = (MaterialTheme.colorScheme.background.red + MaterialTheme.colorScheme.background.green + MaterialTheme.colorScheme.background.blue) > 1.5f
 
-    val termColor = when {
-        isSimulated -> if (isLight) Color(0xFFC62828) else Color(0xFFFF4D6A)     // Red simulated ticks
-        log.type == "TICK" -> if (isLight) Color(0xFF00796B) else Color(0xFF00FFC2)          // Glowing live ticks
-        log.type == "ALERT_TRIGGER" -> if (isLight) Color(0xFFD84315) else Color(0xFFFF3D00) // Alarm alerts
-        log.type == "SYSTEM" -> if (isLight) Color(0xFFE65100) else Color(0xFFFFD600)        // Amber system messages
-        log.type == "CRASH" -> if (isLight) Color(0xFFAD1457) else Color(0xFFFF1744)         // Uncaught exceptions
-        log.type == "ERROR" -> if (isLight) Color(0xFFD84315) else Color(0xFFFF9100)         // Overloaded/recovered loops
-        log.type == "HEALING" -> if (isLight) Color(0xFF2E7D32) else Color(0xFF69F0AE)       // Component self-healing
-        log.type == "PROTECTION" -> if (isLight) Color(0xFF1565C0) else Color(0xFF00E5FF)    // Security protection overrides
-        log.type == "RECOVERY" -> if (isLight) Color(0xFF6A1B9A) else Color(0xFFE040FB)      // Component state retrievals
-        else -> if (isLight) MaterialTheme.colorScheme.onSurface else Color(0xFFECEFF1)
+    // Semantic accent per log type (live data is no longer simulated, so TICK == live).
+    val termColor = when (log.type) {
+        "TICK" -> if (isLight) Color(0xFF00796B) else Color(0xFF00E5C0)          // live ticks
+        "ALERT_TRIGGER" -> if (isLight) Color(0xFFD84315) else Color(0xFFFF6E40) // alert fired
+        "SYSTEM" -> if (isLight) Color(0xFFE65100) else Color(0xFFFFC400)        // system messages
+        "CRASH" -> if (isLight) Color(0xFFAD1457) else Color(0xFFFF5470)         // uncaught exceptions
+        "ERROR" -> if (isLight) Color(0xFFD84315) else Color(0xFFFF9100)         // recovered errors
+        "HEALING" -> if (isLight) Color(0xFF2E7D32) else Color(0xFF69F0AE)       // self-healing
+        "PROTECTION" -> if (isLight) Color(0xFF1565C0) else Color(0xFF00E5FF)    // storage protection
+        "RECOVERY" -> if (isLight) Color(0xFF6A1B9A) else Color(0xFFE040FB)      // session recovery
+        else -> if (isLight) Color(0xFF455A64) else Color(0xFF90A4AE)            // INFO / other
     }
 
-    val typePrefix = when {
-        isSimulated -> "SIM_TICK"
-        log.type == "TICK" -> "LIVE_TICK"
-        log.type == "ALERT_TRIGGER" -> "ALERT"
-        log.type == "SYSTEM" -> "SYSTEM"
-        log.type == "CRASH" -> "CRASH"
-        log.type == "ERROR" -> "ERROR"
-        log.type == "HEALING" -> "HEAL"
-        log.type == "PROTECTION" -> "PROT"
-        log.type == "RECOVERY" -> "RECOV"
+    val typePrefix = when (log.type) {
+        "TICK" -> "TICK"
+        "ALERT_TRIGGER" -> "ALERT"
+        "SYSTEM" -> "SYSTEM"
+        "CRASH" -> "CRASH"
+        "ERROR" -> "ERROR"
+        "HEALING" -> "HEAL"
+        "PROTECTION" -> "PROT"
+        "RECOVERY" -> "RECOV"
         else -> "INFO"
     }
 
-    val isEven = index % 2 == 0
-    val rowBgColor = if (isEven) {
-        if (isLight) Color.White.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.02f)
-    } else {
-        Color.Transparent
-    }
+    val rowBg = if (index % 2 == 0) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f) else Color.Transparent
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .background(rowBgColor)
-            .padding(horizontal = 6.dp, vertical = 3.dp),
+            .clip(RoundedCornerShape(6.dp))
+            .background(rowBg)
+            .padding(start = 0.dp, top = 4.dp, bottom = 4.dp, end = 6.dp),
         verticalAlignment = Alignment.Top
     ) {
-        // Line number helper to feel like a high-end IDE terminal
-        Text(
-            text = String.format("%03d", index + 1),
-            style = MaterialTheme.typography.bodySmall.copy(
-                fontFamily = PriceTextFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 11.sp
-            ),
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
-            modifier = Modifier.width(28.dp)
-        )
-
-        Text(
-            text = "[$timeStr]",
-            style = MaterialTheme.typography.bodySmall.copy(
-                fontFamily = PriceTextFontFamily,
-                fontWeight = FontWeight.Normal,
-                fontSize = 11.sp
-            ),
-            color = if (isLight) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) else Color(0x66ECEFF1)
-        )
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        // Polished level badge
+        // Colored accent bar keyed to the log type.
         Box(
             modifier = Modifier
-                .width(72.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(termColor.copy(alpha = 0.12f))
-                .padding(vertical = 1.dp),
-            contentAlignment = Alignment.Center
-        ) {
+                .padding(end = 8.dp)
+                .width(3.dp)
+                .height(28.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(termColor)
+        )
+
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Type pill
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(termColor.copy(alpha = 0.15f))
+                        .padding(horizontal = 8.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        text = typePrefix,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        fontWeight = FontWeight.ExtraBold,
+                        color = termColor
+                    )
+                }
+                Text(
+                    text = timeStr,
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = PriceTextFontFamily, fontSize = 10.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                log.symbol?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = typePrefix,
+                text = log.message,
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = PriceTextFontFamily,
-                    fontWeight = FontWeight.Black,
-                    fontSize = 9.sp
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
                 ),
-                color = termColor
+                color = if (isLight) MaterialTheme.colorScheme.onSurface else Color(0xFFDCDFE4)
             )
         }
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        Text(
-            text = log.message,
-            style = MaterialTheme.typography.bodySmall.copy(
-                fontFamily = PriceTextFontFamily,
-                fontSize = 11.sp,
-                lineHeight = 14.sp
-            ),
-            color = if (isLight) MaterialTheme.colorScheme.onSurface else Color(0xFFDCDFE4),
-            modifier = Modifier.weight(1f)
-        )
     }
 }
 

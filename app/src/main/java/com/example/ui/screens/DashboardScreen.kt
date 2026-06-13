@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.PriceTick
@@ -54,6 +55,8 @@ fun DashboardScreen(
     val priceState by viewModel.priceState.collectAsState()
     val connStatus by viewModel.connectionStatus.collectAsState()
     val latency by viewModel.latencyMs.collectAsState()
+    val marketOpen by viewModel.marketOpen.collectAsState()
+    val nextMarketChangeAt by viewModel.nextMarketChangeAt.collectAsState()
     val cardStyle by viewModel.dashboardCardStyle.collectAsState()
     val priceTextSize by viewModel.priceTextSize.collectAsState()
     val symbolIdTextSize by viewModel.symbolIdTextSize.collectAsState()
@@ -108,41 +111,41 @@ fun DashboardScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = Spacing.md, vertical = Spacing.sm),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
                 Text(
                     text = "FinTrace Ticker",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
                     text = "Real-time assets monitoring",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            
-            // Highly professional asset manager button
+
+            // Asset manager action — minimum 48dp touch target for accessibility
             Button(
                 onClick = { showManageAssetsDialog = true },
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(Radius.md),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                modifier = Modifier.height(36.dp)
+                contentPadding = PaddingValues(horizontal = Spacing.md, vertical = Spacing.sm),
+                modifier = Modifier.heightIn(min = MinTouchTarget)
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
-                    contentDescription = "Manage Assets",
-                    modifier = Modifier.size(16.dp)
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
                 )
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(Spacing.xs))
                 Text(
                     text = "Manage",
                     style = MaterialTheme.typography.labelLarge,
@@ -159,40 +162,57 @@ fun DashboardScreen(
             maxLimit = maxLimit
         )
 
+        // Market-closed banner with a live countdown to the next session open.
+        if (!marketOpen) {
+            MarketClosedBanner(nextChangeAt = nextMarketChangeAt)
+        }
+
         if (activeSub.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(24.dp),
+                    .padding(Spacing.lg),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.AddChart,
-                        contentDescription = null,
-                        modifier = Modifier.size(72.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(RoundedCornerShape(Radius.xl))
+                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AddChart,
+                            contentDescription = null,
+                            modifier = Modifier.size(44.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(Spacing.lg))
                     Text(
-                        text = "No Active Symbols",
+                        text = "No active symbols yet",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(Spacing.sm))
                     Text(
-                        text = "Go to Settings or tap the [+] button in the status bar to active your portfolio assets for real-time monitoring.",
+                        text = "Add assets to your portfolio to start tracking live prices and trigger alerts.",
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = Spacing.md)
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(Spacing.lg))
                     Button(
                         onClick = { showManageAssetsDialog = true },
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(Radius.md),
+                        modifier = Modifier.heightIn(min = MinTouchTarget)
                     ) {
-                        Text("Add Assets Now")
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(Spacing.xs))
+                        Text("Add your first asset")
                     }
                 }
             }
@@ -299,6 +319,7 @@ fun ConnectionStatusBar(
     val (dotColor, statusText) = when (status) {
         "LIVE" -> Pair(ConnectionLive, "LIVE")
         "CONNECTING" -> Pair(ConnectionReconnecting, "CONNECTING")
+        "CLOSED" -> Pair(NeutralPrice, "MARKET CLOSED")
         else -> Pair(ConnectionOffline, "OFFLINE")
     }
 
@@ -322,7 +343,7 @@ fun ConnectionStatusBar(
             )
             
             Text(
-                text = "$statusText Mode",
+                text = statusText,
                 style = MaterialTheme.typography.labelMedium.copy(
                     fontWeight = FontWeight.Bold,
                     color = dotColor,
@@ -343,14 +364,85 @@ fun ConnectionStatusBar(
                 fontSize = 11.sp
             )
             
-            val pingColor = if (latency < 300) ConnectionLive else ConnectionReconnecting
-            Text(
-                text = "Ping: ${latency}ms",
-                style = MaterialTheme.typography.labelMedium,
-                color = pingColor,
-                fontWeight = FontWeight.Medium,
-                fontSize = 11.sp
+            if (status == "LIVE") {
+                val pingColor = if (latency < 300) ConnectionLive else ConnectionReconnecting
+                Text(
+                    text = "Ping: ${latency}ms",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = pingColor,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 11.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun MarketClosedBanner(nextChangeAt: Long) {
+    // Live 1-second countdown to the next session open.
+    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(nextChangeAt) {
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val remaining = (nextChangeAt - nowMs).coerceAtLeast(0L)
+    val totalMin = remaining / 60000
+    val days = totalMin / (60 * 24)
+    val hours = (totalMin / 60) % 24
+    val minutes = totalMin % 60
+    val opensIn = when {
+        days > 0 -> "${days}d ${hours}h"
+        hours > 0 -> "${hours}h ${minutes}m"
+        else -> "${minutes}m"
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+        shape = RoundedCornerShape(Radius.md),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Schedule,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
             )
+            Spacer(Modifier.width(Spacing.sm))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Market closed",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "Live updates paused to save battery · resumes automatically",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    "OPENS IN",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    opensIn,
+                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = PriceTextFontFamily),
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
         }
     }
 }
@@ -512,7 +604,8 @@ fun PriceMetricCard(
     }
 
     // STATE CONTROLLERS
-    val isOffline = connectionStatus == "OFFLINE"
+    val isOffline = connectionStatus == "OFFLINE" || connectionStatus == "CLOSED"
+    val isClosed = connectionStatus == "CLOSED"
     val elapsedMs = System.currentTimeMillis() - tick.timestamp
     val isStale = !isOffline && (elapsedMs > 30000)
     val isAlerted = activeAlerts.isNotEmpty()
@@ -545,21 +638,11 @@ fun PriceMetricCard(
         else -> AlertActive
     }
 
-    // Border pulse animation (1Hz) for Alert state
-    val infiniteTransition = rememberInfiniteTransition(label = "glowPulse")
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 0.75f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowAlpha"
-    )
-
+    // Calm, static accents (no distracting 1Hz pulse; also avoids a continuous animation).
     val cardBorder = when {
-        isOffline -> BorderStroke(1.dp, ConnectionOffline)
-        isAlerted -> BorderStroke(2.dp, alertStyleColor.copy(alpha = glowAlpha))
+        isClosed -> BorderStroke(1.dp, NeutralPrice.copy(alpha = 0.4f))
+        isOffline -> BorderStroke(1.dp, ConnectionOffline.copy(alpha = 0.55f))
+        isAlerted -> BorderStroke(1.5.dp, alertStyleColor.copy(alpha = 0.5f))
         else -> null
     }
 
@@ -590,256 +673,233 @@ fun PriceMetricCard(
                     }
                 } else Modifier
             ),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         border = cardBorder
     ) {
         Column(
             modifier = Modifier
-                .padding(12.dp)
+                .padding(14.dp)
                 .alpha(displayOpacity)
         ) {
             val displayDecs = info.getDisplayDecimals()
+            val catColor = when (info.category.lowercase()) {
+                "metals" -> Color(0xFFFFC107)
+                "majors" -> MaterialTheme.colorScheme.primary
+                else -> NeutralPrice
+            }
+            val stateColor = when {
+                isClosed -> NeutralPrice
+                isOffline -> ConnectionOffline
+                isStale -> AlertActive
+                isAlerted -> alertStyleColor
+                else -> ConnectionLive
+            }
+            val stateLabel = when {
+                isClosed -> "CLOSED"
+                isOffline -> "OFFLINE"
+                isStale -> "STALE"
+                isAlerted -> highestPriority
+                else -> "LIVE"
+            }
 
-            // Header status / State overlays
+            // ── Header: asset identity + live status chip ──
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Symbol ID & Full Description
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Text(
-                        text = tick.symbol,
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Black,
-                            fontSize = symbolIdSize,
-                            letterSpacing = 0.5.sp
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    // Symbol Category Dot Indicator
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(Radius.md))
+                            .background(catColor.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            tick.symbol.take(2).uppercase(),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = catColor
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = tick.symbol,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = symbolIdSize,
+                                letterSpacing = 0.3.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = info.name,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = symbolNameSize),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(Radius.pill))
+                        .background(stateColor.copy(alpha = 0.14f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
                     Box(
                         modifier = Modifier
                             .size(6.dp)
                             .clip(RoundedCornerShape(3.dp))
-                            .background(
-                                when (info.category.lowercase()) {
-                                    "metals" -> Color(0xFFFFD700)
-                                    "majors" -> MaterialTheme.colorScheme.primary
-                                    else -> Color.Gray
-                                }
-                            )
+                            .background(stateColor)
                     )
-                }
-
-                // Status Badge / Overlays matching State requirements
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(
-                            when {
-                                isOffline -> ConnectionOffline.copy(alpha = 0.12f)
-                                isStale -> AlertActive.copy(alpha = 0.12f)
-                                isAlerted -> alertStyleColor.copy(alpha = 0.15f)
-                                else -> ConnectionLive.copy(alpha = 0.12f)
-                            }
-                        )
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(5.dp)
-                                .clip(RoundedCornerShape(2.5.dp))
-                                .background(
-                                    when {
-                                        isOffline -> ConnectionOffline
-                                        isStale -> AlertActive
-                                        isAlerted -> alertStyleColor
-                                        else -> ConnectionLive
-                                    }
-                                )
-                        )
-                        Text(
-                            text = when {
-                                isOffline -> "OFFLINE"
-                                isStale -> "STALE"
-                                isAlerted -> "WATCH: $highestPriority"
-                                else -> "LIVE ⚡"
-                            },
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
-                            color = when {
-                                isOffline -> ConnectionOffline
-                                isStale -> AlertActive
-                                isAlerted -> alertStyleColor
-                                else -> ConnectionLive
-                            },
-                            fontSize = 8.sp
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Large Dominant Price Display (Anchors the Grid cell)
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                Text(
-                    text = tick.price.formatPriceDynamic(displayDecs),
-                    style = MaterialTheme.typography.displayMedium.copy(
-                        fontFamily = PriceTextFontFamily,
+                    Text(
+                        text = stateLabel,
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = priceSize,
-                        letterSpacing = (-1).sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Net movements and percentage movement block
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "$arrowSymbol " + tick.change.formatPriceDynamic(displayDecs).replace("+", "").replace("-", ""),
-                        color = changeColor,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = PriceTextFontFamily, fontSize = 13.sp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = String.format("%.2f%%", kotlin.math.abs(tick.changePercent)),
-                        color = changeColor,
-                        fontWeight = FontWeight.Black,
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 13.sp)
+                        fontSize = 9.sp,
+                        color = stateColor
                     )
                 }
+            }
 
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // ── Dominant price + colored change pill ──
+            Text(
+                text = tick.price.formatPriceDynamic(displayDecs),
+                style = MaterialTheme.typography.displayMedium.copy(
+                    fontFamily = PriceTextFontFamily,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = priceSize,
+                    letterSpacing = (-1).sp
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(Radius.sm))
+                    .background(changeColor.copy(alpha = 0.14f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(arrowSymbol, color = changeColor, fontWeight = FontWeight.Black, style = MaterialTheme.typography.labelMedium)
                 Text(
-                    text = info.name,
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = symbolNameSize),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    maxLines = 1
+                    text = tick.change.formatPriceDynamic(displayDecs).replace("+", "").replace("-", ""),
+                    color = changeColor,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.labelLarge.copy(fontFamily = PriceTextFontFamily)
+                )
+                Text(
+                    text = "(" + String.format(java.util.Locale.US, "%.2f%%", kotlin.math.abs(tick.changePercent)) + ")",
+                    color = changeColor,
+                    fontWeight = FontWeight.Black,
+                    style = MaterialTheme.typography.labelMedium
                 )
             }
 
-            // Supporting Info: Bid / Ask / Spread / Sparkline (Hidden in Compact mode)
+            // Supporting info (hidden in Compact mode)
             if (cardStyle != "Compact") {
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
+                // ── Bid / Ask / Spread mini-grid ──
+                val spread = if (tick.ask > tick.bid) tick.ask - tick.bid else 0.0001
+                val spreadInt = kotlin.math.round(spread * java.lang.Math.pow(10.0, displayDecs.toDouble())).toInt()
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.md))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            text = "BID / ASK FEED",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 8.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        )
-                        Spacer(modifier = Modifier.height(1.dp))
-                        Text(
-                            text = "B: ${tick.bid.formatPriceDynamic(displayDecs)}  |  A: ${tick.ask.formatPriceDynamic(displayDecs)}",
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = PriceTextFontFamily, fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-
-                    val spread = if (tick.ask > tick.bid) tick.ask - tick.bid else 0.0001
-                    val multiplier = java.lang.Math.pow(10.0, displayDecs.toDouble())
-                    val spreadInt = kotlin.math.round(spread * multiplier).toInt()
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = "SPREAD",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 8.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        )
-                        Spacer(modifier = Modifier.height(1.dp))
-                        Text(
-                            text = "$spreadInt PTS",
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = PriceTextFontFamily, fontWeight = FontWeight.Black),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
+                    PriceStatCell("BID", tick.bid.formatPriceDynamic(displayDecs), MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
+                    PriceStatDivider()
+                    PriceStatCell("ASK", tick.ask.formatPriceDynamic(displayDecs), MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
+                    PriceStatDivider()
+                    PriceStatCell("SPREAD", "$spreadInt pts", MaterialTheme.colorScheme.primary, Modifier.weight(1f))
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Canvas Sparkline
+                // ── Sparkline ──
                 if (tick.history.size > 1) {
-                    Box(
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Canvas(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(44.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.35f))
-                            .padding(vertical = 3.dp, horizontal = 10.dp)
+                            .height(48.dp)
                     ) {
-                        Canvas(modifier = Modifier.fillMaxSize()) {
-                            val width = size.width
-                            val height = size.height
-
-                            val minVal = tick.history.minOrNull() ?: 1.0
-                            val maxVal = tick.history.maxOrNull() ?: 1.0
-                            val diff = if (maxVal - minVal > 0.0) maxVal - minVal else 1.0
-
-                            val stepX = width / (tick.history.size - 1)
-                            val path = Path()
-
-                            tick.history.forEachIndexed { i, p ->
-                                val x = i * stepX
-                                val normalizeY = (p - minVal) / diff
-                                val y = height - (normalizeY * height).toFloat()
-
-                                if (i == 0) {
-                                    path.moveTo(x, y)
-                                } else {
-                                    path.lineTo(x, y)
-                                }
-                            }
-
-                            drawPath(
-                                path = path,
-                                color = changeColor,
-                                style = Stroke(width = 2.dp.toPx())
-                            )
+                        val width = size.width
+                        val height = size.height
+                        val minVal = tick.history.minOrNull() ?: 1.0
+                        val maxVal = tick.history.maxOrNull() ?: 1.0
+                        val diff = if (maxVal - minVal > 0.0) maxVal - minVal else 1.0
+                        val stepX = width / (tick.history.size - 1)
+                        val line = Path()
+                        tick.history.forEachIndexed { i, p ->
+                            val x = i * stepX
+                            val y = height - ((p - minVal) / diff * height).toFloat()
+                            if (i == 0) line.moveTo(x, y) else line.lineTo(x, y)
                         }
+                        drawPath(path = line, color = changeColor, style = Stroke(width = 2.dp.toPx()))
                     }
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
-                // Exact state-dependent elapsed time label at bottom
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = when {
-                        isOffline -> "offline (last known price)"
-                        isStale -> "⚠ stale (${elapsedMs / 1000}s ago)"
-                        else -> "updated ${elapsedMs / 1000}s ago"
+                        isClosed -> "Market closed · last price"
+                        isOffline -> "Offline · last known price"
+                        isStale -> "⚠ Stale · ${elapsedMs / 1000}s ago"
+                        else -> "Updated ${elapsedMs / 1000}s ago"
                     },
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                    color = if (isStale) AlertActive else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isStale) AlertActive else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.align(Alignment.End)
                 )
             }
         }
     }
+}
+
+@Composable
+private fun PriceStatCell(label: String, value: String, valueColor: Color, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = PriceTextFontFamily),
+            fontWeight = FontWeight.Bold,
+            color = valueColor,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun PriceStatDivider() {
+    Box(
+        modifier = Modifier
+            .height(28.dp)
+            .width(1.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant)
+    )
 }
 
 @Composable
@@ -999,7 +1059,8 @@ fun PriceMetricClassicRow(
     }
 
     // STATE CONTROLLERS
-    val isOffline = connectionStatus == "OFFLINE"
+    val isOffline = connectionStatus == "OFFLINE" || connectionStatus == "CLOSED"
+    val isClosed = connectionStatus == "CLOSED"
     val elapsedMs = System.currentTimeMillis() - tick.timestamp
     val isStale = !isOffline && (elapsedMs > 30000)
     val isAlerted = activeAlerts.isNotEmpty()
@@ -1032,21 +1093,10 @@ fun PriceMetricClassicRow(
         else -> AlertActive
     }
 
-    // Glowing border for ALERTED state
-    val infiniteTransition = rememberInfiniteTransition(label = "rowGlowPulse")
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 0.75f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowAlpha"
-    )
-
+    // Static accent for ALERTED state (no continuous pulse animation).
     val rowBorder = when {
         isOffline -> BorderStroke(1.dp, ConnectionOffline.copy(alpha = 0.5f))
-        isAlerted -> BorderStroke(1.5.dp, alertStyleColor.copy(alpha = glowAlpha))
+        isAlerted -> BorderStroke(1.5.dp, alertStyleColor.copy(alpha = 0.5f))
         else -> null
     }
 
@@ -1100,6 +1150,7 @@ fun PriceMetricClassicRow(
                 
                 // State indication dot matching specs
                 val dotColor = when {
+                    isClosed -> NeutralPrice
                     isOffline -> ConnectionOffline
                     isStale -> AlertActive
                     isAlerted -> alertStyleColor

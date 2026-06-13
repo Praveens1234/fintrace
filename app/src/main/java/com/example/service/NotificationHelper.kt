@@ -16,11 +16,12 @@ import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
 import com.example.data.model.Alert
+import com.example.data.repository.PriceMonitorManager
 import com.example.data.model.PriceTick
 import com.example.data.model.SymbolInfo
 import com.example.data.model.formatPriceDynamic
 import com.example.data.model.getDisplayDecimals
-import java.text.DecimalFormat
+import java.util.Locale
 
 object NotificationHelper {
 
@@ -171,7 +172,7 @@ object NotificationHelper {
             )
             val priceStr = tick.price.formatPriceDynamic(info.getDisplayDecimals())
             val dir = if (tick.change >= 0) "▲" else "▼"
-            val pct = String.format("%.2f%%", kotlin.math.abs(tick.changePercent))
+            val pct = String.format(Locale.US, "%.2f%%", kotlin.math.abs(tick.changePercent))
             "$sym ($dir $priceStr · $pct)"
         }
 
@@ -258,7 +259,8 @@ object NotificationHelper {
         triggerDeviceHaptic(context, alert.priority)
 
         // Play user-selected device tone with voice audio
-        val voiceMsg = "Alert: ${alert.symbol} crossed target price of $formattedPrice"
+        val ttsLang = PriceMonitorManager.getInstance(context).getTtsLanguage()
+        val voiceMsg = AlertSoundPlayer.buildAlertText(alert.symbol, formattedPrice, ttsLang)
         AlertSoundPlayer.playAlertSound(context, voiceMsg, alert.priority)
     }
 
@@ -304,9 +306,10 @@ object NotificationHelper {
                 nm.notify(DEMO_NOTIFICATION_ID, notification)
                 triggerDeviceHaptic(context, "HIGH")
 
+                val demoLang = PriceMonitorManager.getInstance(context).getTtsLanguage()
                 AlertSoundPlayer.playAlertSound(
                     context,
-                    "Demo warning! Gold Spot crossed 2,320.00",
+                    AlertSoundPlayer.buildAlertText("XAU/USD", "2,320.00", demoLang),
                     "HIGH"
                 )
             }
@@ -328,9 +331,10 @@ object NotificationHelper {
                 nm.notify(DEMO_NOTIFICATION_ID, notification)
                 triggerDeviceHaptic(context, "CRITICAL")
 
+                val demoLang2 = PriceMonitorManager.getInstance(context).getTtsLanguage()
                 AlertSoundPlayer.playAlertSound(
                     context,
-                    "Urgent Priority Alert: Gold Spot has crossed 2,320.00",
+                    AlertSoundPlayer.buildAlertText("XAU/USD", "2,320.00", demoLang2),
                     "CRITICAL"
                 )
             }

@@ -1,5 +1,6 @@
 package com.example.service
 
+import java.util.Locale
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
@@ -119,7 +120,7 @@ class PriceWidgetFiveProvider : AppWidgetProvider() {
                         )
                         views.setTextViewText(prices[i], resolvedTick.price.formatPriceDynamic(info.getDisplayDecimals()))
                         val sign = if (resolvedTick.change >= 0) "+" else ""
-                        views.setTextViewText(changes[i], "$sign${String.format("%.2f%%", resolvedTick.changePercent)}")
+                        views.setTextViewText(changes[i], "$sign${String.format(Locale.US, "%.2f%%", resolvedTick.changePercent)}")
                         views.setTextColor(changes[i], if (resolvedTick.change >= 0) 0xFF69F0AE.toInt() else 0xFFFF5252.toInt())
                     } else {
                         views.setViewVisibility(rows[i], View.GONE)

@@ -15,7 +15,7 @@ import com.example.data.model.SymbolInfo
 import com.example.data.model.formatPriceDynamic
 import com.example.data.model.getDisplayDecimals
 import com.example.data.repository.PriceMonitorManager
-import java.text.DecimalFormat
+import java.util.Locale
 
 class PriceWidgetProvider : AppWidgetProvider() {
 
@@ -88,7 +88,7 @@ class PriceWidgetProvider : AppWidgetProvider() {
                     if (tick != null) {
                         views.setTextViewText(R.id.text_symbol_1_price, tick.price.formatPriceDynamic(info.getDisplayDecimals()))
                         val sign = if (tick.change >= 0) "+" else ""
-                        views.setTextViewText(R.id.text_symbol_1_change, "$sign${String.format("%.2f%%", tick.changePercent)}")
+                        views.setTextViewText(R.id.text_symbol_1_change, "$sign${String.format(Locale.US, "%.2f%%", tick.changePercent)}")
                         views.setTextColor(R.id.text_symbol_1_change, if (tick.change >= 0) 0xFF69F0AE.toInt() else 0xFFFF5252.toInt())
                     }
                 } else {
@@ -106,7 +106,7 @@ class PriceWidgetProvider : AppWidgetProvider() {
                     if (tick != null) {
                         views.setTextViewText(R.id.text_symbol_2_price, tick.price.formatPriceDynamic(info.getDisplayDecimals()))
                         val sign = if (tick.change >= 0) "+" else ""
-                        views.setTextViewText(R.id.text_symbol_2_change, "$sign${String.format("%.2f%%", tick.changePercent)}")
+                        views.setTextViewText(R.id.text_symbol_2_change, "$sign${String.format(Locale.US, "%.2f%%", tick.changePercent)}")
                         views.setTextColor(R.id.text_symbol_2_change, if (tick.change >= 0) 0xFF69F0AE.toInt() else 0xFFFF5252.toInt())
                     }
                 } else {
@@ -124,7 +124,7 @@ class PriceWidgetProvider : AppWidgetProvider() {
                     if (tick != null) {
                         views.setTextViewText(R.id.text_symbol_3_price, tick.price.formatPriceDynamic(info.getDisplayDecimals()))
                         val sign = if (tick.change >= 0) "+" else ""
-                        views.setTextViewText(R.id.text_symbol_3_change, "$sign${String.format("%.2f%%", tick.changePercent)}")
+                        views.setTextViewText(R.id.text_symbol_3_change, "$sign${String.format(Locale.US, "%.2f%%", tick.changePercent)}")
                         views.setTextColor(R.id.text_symbol_3_change, if (tick.change >= 0) 0xFF69F0AE.toInt() else 0xFFFF5252.toInt())
                     }
                 } else {

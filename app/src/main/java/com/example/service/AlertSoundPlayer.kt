@@ -20,6 +20,7 @@ object AlertSoundPlayer {
     private var currentRingtone: Ringtone? = null
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
+    @Volatile private var ttsLocale: Locale = Locale.US
     private val handler = Handler(Looper.getMainLooper())
     private var stopRunnable: Runnable? = null
 
@@ -27,18 +28,47 @@ object AlertSoundPlayer {
         if (tts == null) {
             tts = TextToSpeech(context.applicationContext) { status ->
                 if (status == TextToSpeech.SUCCESS) {
-                    tts?.let {
-                        val result = it.setLanguage(Locale.US)
-                        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                            Log.e("AlertSoundPlayer", "TTS Language not supported or missing data")
-                        } else {
-                            isTtsReady = true
-                        }
-                    }
+                    applyTtsLocale()
                 } else {
                     Log.e("AlertSoundPlayer", "TTS Initialization failed")
                 }
             }
+        }
+    }
+
+    fun updateTtsLocale(languageTag: String, context: Context) {
+        ttsLocale = parseLocale(languageTag)
+        if (tts != null) {
+            applyTtsLocale()
+        } else {
+            initTts(context)
+        }
+    }
+
+    private fun parseLocale(languageTag: String): Locale = when (languageTag) {
+        "hi-IN" -> Locale("hi", "IN")
+        else -> Locale.US
+    }
+
+    private fun applyTtsLocale() {
+        tts?.let { ttsInstance ->
+            val result = ttsInstance.setLanguage(ttsLocale)
+            isTtsReady = when (result) {
+                TextToSpeech.LANG_MISSING_DATA, TextToSpeech.LANG_NOT_SUPPORTED -> {
+                    Log.w("AlertSoundPlayer", "TTS locale $ttsLocale not available, falling back to English")
+                    val fallback = ttsInstance.setLanguage(Locale.US)
+                    fallback != TextToSpeech.LANG_MISSING_DATA && fallback != TextToSpeech.LANG_NOT_SUPPORTED
+                }
+                else -> true
+            }
+        }
+    }
+
+    fun buildAlertText(symbol: String, formattedPrice: String, languageTag: String): String {
+        val symSpoken = symbol.replace("/", " ")
+        return when (languageTag) {
+            "hi-IN" -> "सूचना: $symSpoken का मूल्य $formattedPrice पर पहुंचा"
+            else -> "Alert: $symbol crossed target price of $formattedPrice"
         }
     }
 
@@ -67,11 +97,9 @@ object AlertSoundPlayer {
                             if (isTtsReady) {
                                 tts?.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "ALERT_TTS")
                             } else {
-                                // Initialize and play upon initialization later
                                 tts = TextToSpeech(context.applicationContext) { status ->
                                     if (status == TextToSpeech.SUCCESS) {
-                                        tts?.setLanguage(Locale.US)
-                                        isTtsReady = true
+                                        applyTtsLocale()
                                         tts?.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "ALERT_TTS")
                                     }
                                 }

@@ -2,10 +2,17 @@ package com.example
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -13,6 +20,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.example.ui.screens.*
 import com.example.ui.theme.FinTraceTheme
 import com.example.viewmodel.MainViewModel
@@ -48,125 +56,194 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // ── System back handling ──────────────────────────────────────────
+                // Navigation is driven by manual state, so the system Back gesture/key must be
+                // intercepted; otherwise it propagates to the OS and exits the app. Each handler
+                // is only enabled for the routes it applies to (the most specific wins because
+                // Compose dispatches Back to the last-registered enabled handler).
+                BackHandler(enabled = currentRoute == "detail") {
+                    currentRoute = "home" // return to the Prices tab the user came from
+                }
+                BackHandler(enabled = currentRoute == "about_app" || currentRoute == "about_dev" || currentRoute == "permissions") {
+                    currentRoute = "home"
+                    currentTab = "settings"
+                }
+                // On the home shell, Back from any non-Prices tab returns to Prices (the home tab);
+                // Back from Prices itself falls through to the OS (exit), the expected Android behavior.
+                BackHandler(enabled = currentRoute == "home" && currentTab != "prices") {
+                    currentTab = "prices"
+                }
+
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    when (currentRoute) {
-                        "wizard_check" -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(MaterialTheme.colorScheme.background),
-                                contentAlignment = androidx.compose.ui.Alignment.Center
-                            ) {
-                                CircularProgressIndicator()
+                    AnimatedContent(
+                        targetState = currentRoute,
+                        transitionSpec = {
+                            val enterTransition: EnterTransition
+                            val exitTransition: ExitTransition
+                            when {
+                                targetState == "detail" -> {
+                                    enterTransition = slideInHorizontally(
+                                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                                        initialOffsetX = { it / 3 }
+                                    ) + fadeIn(tween(280))
+                                    exitTransition = slideOutHorizontally(
+                                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                                        targetOffsetX = { -it / 6 }
+                                    ) + fadeOut(tween(180))
+                                }
+                                initialState == "detail" -> {
+                                    enterTransition = slideInHorizontally(
+                                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                                        initialOffsetX = { -it / 6 }
+                                    ) + fadeIn(tween(280))
+                                    exitTransition = slideOutHorizontally(
+                                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                                        targetOffsetX = { it / 3 }
+                                    ) + fadeOut(tween(180))
+                                }
+                                targetState == "wizard" || initialState == "wizard" -> {
+                                    enterTransition = fadeIn(tween(320))
+                                    exitTransition = fadeOut(tween(200))
+                                }
+                                else -> {
+                                    enterTransition = fadeIn(tween(240))
+                                    exitTransition = fadeOut(tween(160))
+                                }
                             }
-                        }
-
-                        "wizard" -> {
-                            SetupWizardScreen(
-                                viewModel = viewModel,
-                                onSetupComplete = {
-                                    viewModel.saveSettingGeneric("setup_completed", "true")
-                                    currentRoute = "home"
-                                }
-                            )
-                        }
-
-                        "home" -> {
-                            Scaffold(
-                                bottomBar = {
-                                    NavigationBar(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                        windowInsets = WindowInsets.navigationBars
-                                    ) {
-                                        NavigationBarItem(
-                                            selected = currentTab == "prices",
-                                            onClick = { currentTab = "prices" },
-                                            icon = { Icon(Icons.Default.TrendingUp, contentDescription = null) },
-                                            label = { Text("Prices") }
-                                        )
-                                        NavigationBarItem(
-                                            selected = currentTab == "alerts",
-                                            onClick = { currentTab = "alerts" },
-                                            icon = { Icon(Icons.Default.Notifications, contentDescription = null) },
-                                            label = { Text("Alerts") }
-                                        )
-                                        NavigationBarItem(
-                                            selected = currentTab == "logs",
-                                            onClick = { currentTab = "logs" },
-                                            icon = { Icon(Icons.Default.History, contentDescription = null) },
-                                            label = { Text("Logs") }
-                                        )
-                                        NavigationBarItem(
-                                            selected = currentTab == "settings",
-                                            onClick = { currentTab = "settings" },
-                                            icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                                            label = { Text("Settings") }
-                                        )
-                                    }
-                                }
-                            ) { innerPadding ->
+                            enterTransition togetherWith exitTransition
+                        },
+                        label = "route_anim"
+                    ) { route ->
+                        when (route) {
+                            "wizard_check" -> {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(innerPadding)
+                                        .background(MaterialTheme.colorScheme.background),
+                                    contentAlignment = androidx.compose.ui.Alignment.Center
                                 ) {
-                                    when (currentTab) {
-                                        "prices" -> {
-                                            DashboardScreen(
-                                                viewModel = viewModel,
-                                                onSymbolSelected = { sym ->
-                                                    selectedSymbolForDetail = sym
-                                                    currentRoute = "detail"
-                                                },
-                                                onQuickAlertRequest = { sym ->
-                                                    selectedSymbolForDetail = sym
-                                                    currentTab = "alerts"
+                                    CircularProgressIndicator()
+                                }
+                            }
+
+                            "wizard" -> {
+                                SetupWizardScreen(
+                                    viewModel = viewModel,
+                                    onSetupComplete = {
+                                        viewModel.saveSettingGeneric("setup_completed", "true")
+                                        currentRoute = "home"
+                                    }
+                                )
+                            }
+
+                            "home" -> {
+                                Scaffold(
+                                    bottomBar = {
+                                        NavigationBar(
+                                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                                            tonalElevation = 0.dp,
+                                            windowInsets = WindowInsets.navigationBars
+                                        ) {
+                                            val navItemColors = NavigationBarItemDefaults.colors(
+                                                selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            val tabs = listOf(
+                                                Triple("prices", Icons.Default.TrendingUp, "Prices"),
+                                                Triple("alerts", Icons.Default.Notifications, "Alerts"),
+                                                Triple("logs", Icons.Default.History, "Logs"),
+                                                Triple("settings", Icons.Default.Settings, "Settings")
+                                            )
+                                            tabs.forEach { (tabRoute, icon, label) ->
+                                                NavigationBarItem(
+                                                    selected = currentTab == tabRoute,
+                                                    onClick = { currentTab = tabRoute },
+                                                    icon = { Icon(icon, contentDescription = label) },
+                                                    label = { Text(label) },
+                                                    colors = navItemColors
+                                                )
+                                            }
+                                        }
+                                    }
+                                ) { innerPadding ->
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(innerPadding)
+                                    ) {
+                                        AnimatedContent(
+                                            targetState = currentTab,
+                                            transitionSpec = {
+                                                fadeIn(tween(200)) togetherWith fadeOut(tween(150))
+                                            },
+                                            label = "tab_anim"
+                                        ) { tab ->
+                                            when (tab) {
+                                                "prices" -> {
+                                                    DashboardScreen(
+                                                        viewModel = viewModel,
+                                                        onSymbolSelected = { sym ->
+                                                            selectedSymbolForDetail = sym
+                                                            currentRoute = "detail"
+                                                        },
+                                                        onQuickAlertRequest = { sym ->
+                                                            selectedSymbolForDetail = sym
+                                                            currentTab = "alerts"
+                                                        }
+                                                    )
                                                 }
-                                            )
-                                        }
 
-                                        "alerts" -> {
-                                            AlertListScreen(viewModel = viewModel)
-                                         }
+                                                "alerts" -> {
+                                                    AlertListScreen(viewModel = viewModel)
+                                                }
 
-                                         "logs" -> {
-                                             LogsScreen(viewModel = viewModel)
-                                        }
+                                                "logs" -> {
+                                                    LogsScreen(viewModel = viewModel)
+                                                }
 
-                                        "settings" -> {
-                                            SettingsScreen(
-                                                viewModel = viewModel,
-                                                onNavigateToAboutApp = { currentRoute = "about_app" },
-                                                onNavigateToAboutDeveloper = { currentRoute = "about_dev" },
-                                                onNavigateToPermissions = { currentRoute = "permissions" }
-                                            )
+                                                "settings" -> {
+                                                    SettingsScreen(
+                                                        viewModel = viewModel,
+                                                        onNavigateToAboutApp = { currentRoute = "about_app" },
+                                                        onNavigateToAboutDeveloper = { currentRoute = "about_dev" },
+                                                        onNavigateToPermissions = { currentRoute = "permissions" }
+                                                    )
+                                                }
+
+                                                else -> {}
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        "detail" -> {
-                            SymbolDetailScreen(
-                                symbol = selectedSymbolForDetail,
-                                viewModel = viewModel,
-                                onBack = { currentRoute = "home" }
-                            )
-                        }
+                            "detail" -> {
+                                SymbolDetailScreen(
+                                    symbol = selectedSymbolForDetail,
+                                    viewModel = viewModel,
+                                    onBack = { currentRoute = "home" }
+                                )
+                            }
 
-                        "about_app" -> {
-                            AboutAppScreen(onBack = { currentRoute = "home"; currentTab = "settings" })
-                        }
+                            "about_app" -> {
+                                AboutAppScreen(onBack = { currentRoute = "home"; currentTab = "settings" })
+                            }
 
-                        "about_dev" -> {
-                            AboutDeveloperScreen(onBack = { currentRoute = "home"; currentTab = "settings" })
-                        }
+                            "about_dev" -> {
+                                AboutDeveloperScreen(onBack = { currentRoute = "home"; currentTab = "settings" })
+                            }
 
-                        "permissions" -> {
-                            PermissionHelperScreen(onBack = { currentRoute = "home"; currentTab = "settings" })
+                            "permissions" -> {
+                                PermissionHelperScreen(onBack = { currentRoute = "home"; currentTab = "settings" })
+                            }
+
+                            else -> {}
                         }
                     }
                 }
@@ -174,6 +251,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Overriding dispatchKeyEvent to silence active alerts via the hardware volume keys.
+    // Lint's RestrictedApi check false-positives on the super call from a non-androidx module.
+    @android.annotation.SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
             val keyCode = event.keyCode
