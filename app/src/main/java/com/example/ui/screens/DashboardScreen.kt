@@ -557,21 +557,10 @@ fun PriceMetricCard(
         else -> AlertActive
     }
 
-    // Border pulse animation (1Hz) for Alert state
-    val infiniteTransition = rememberInfiniteTransition(label = "glowPulse")
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 0.75f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowAlpha"
-    )
-
+    // Calm, static accents (no distracting 1Hz pulse; also avoids a continuous animation).
     val cardBorder = when {
-        isOffline -> BorderStroke(1.dp, ConnectionOffline)
-        isAlerted -> BorderStroke(2.dp, alertStyleColor.copy(alpha = glowAlpha))
+        isOffline -> BorderStroke(1.dp, ConnectionOffline.copy(alpha = 0.55f))
+        isAlerted -> BorderStroke(1.5.dp, alertStyleColor.copy(alpha = 0.5f))
         else -> null
     }
 
@@ -602,8 +591,8 @@ fun PriceMetricCard(
                     }
                 } else Modifier
             ),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         border = cardBorder
     ) {
         Column(
@@ -1044,21 +1033,10 @@ fun PriceMetricClassicRow(
         else -> AlertActive
     }
 
-    // Glowing border for ALERTED state
-    val infiniteTransition = rememberInfiniteTransition(label = "rowGlowPulse")
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.25f,
-        targetValue = 0.75f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowAlpha"
-    )
-
+    // Static accent for ALERTED state (no continuous pulse animation).
     val rowBorder = when {
         isOffline -> BorderStroke(1.dp, ConnectionOffline.copy(alpha = 0.5f))
-        isAlerted -> BorderStroke(1.5.dp, alertStyleColor.copy(alpha = glowAlpha))
+        isAlerted -> BorderStroke(1.5.dp, alertStyleColor.copy(alpha = 0.5f))
         else -> null
     }
 
