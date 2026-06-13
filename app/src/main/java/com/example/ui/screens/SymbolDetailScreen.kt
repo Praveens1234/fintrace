@@ -83,16 +83,16 @@ fun SymbolDetailScreen(
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    shape = RoundedCornerShape(Radius.lg),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
                 ) {
                     Column(
-                        modifier = Modifier.padding(20.dp),
+                        modifier = Modifier.padding(Spacing.lg),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
                             text = info.name,
-                            style = MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(10.dp))
@@ -120,7 +120,7 @@ fun SymbolDetailScreen(
                             )
                             Spacer(modifier = Modifier.width(16.dp))
                             Text(
-                                text = if (tick != null) String.format("%.2f%%", kotlin.math.abs(tick.changePercent)) else "0.0%",
+                                text = if (tick != null) String.format(java.util.Locale.US, "%.2f%%", kotlin.math.abs(tick.changePercent)) else "0.0%",
                                 color = changeColor,
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleMedium

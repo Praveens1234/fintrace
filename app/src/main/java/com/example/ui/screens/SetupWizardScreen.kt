@@ -13,6 +13,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.CompareArrows
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,13 +23,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.SymbolInfo
+import com.example.ui.theme.ConnectionLive
+import com.example.ui.theme.Radius
+import com.example.ui.theme.Spacing
+import com.example.ui.theme.MinTouchTarget
 import com.example.viewmodel.MainViewModel
+import androidx.compose.foundation.background
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -112,7 +121,7 @@ fun SetupWizardScreen(
                     Text(if (currentStep == totalSteps) "Finish" else "Next")
                     if (currentStep < totalSteps) {
                         Icon(
-                            imageVector = Icons.Default.ArrowForward,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = null,
                             modifier = Modifier.padding(start = 4.dp)
                         )
@@ -124,18 +133,26 @@ fun SetupWizardScreen(
 }
 
 @Composable
+private fun HeroIcon(icon: ImageVector, tint: Color = MaterialTheme.colorScheme.primary) {
+    Box(
+        modifier = Modifier
+            .size(112.dp)
+            .clip(RoundedCornerShape(Radius.xl))
+            .background(tint.copy(alpha = 0.14f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(56.dp))
+    }
+}
+
+@Composable
 fun StepWelcome() {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(
-            imageVector = Icons.Default.TrendingUp,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(96.dp)
-        )
+        HeroIcon(Icons.AutoMirrored.Filled.TrendingUp)
         Spacer(modifier = Modifier.height(24.dp))
         Text(
             text = "Welcome to FinTrace",
@@ -248,7 +265,7 @@ fun StepSymbols(viewModel: MainViewModel) {
                         val icon = when (s.category) {
                             "Metals" -> Icons.Default.Brightness5
                             "Majors" -> Icons.Default.AttachMoney
-                            else -> Icons.Default.CompareArrows
+                            else -> Icons.AutoMirrored.Filled.CompareArrows
                         }
                         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     },
@@ -347,12 +364,7 @@ fun StepReady(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(
-            imageVector = Icons.Default.CheckCircle,
-            contentDescription = null,
-            tint = Color(0xFF00E676),
-            modifier = Modifier.size(96.dp)
-        )
+        HeroIcon(Icons.Default.CheckCircle, tint = ConnectionLive)
         Spacer(modifier = Modifier.height(24.dp))
         Text(
             text = "You are Ready!",
@@ -371,7 +383,8 @@ fun StepReady(
 
         Button(
             onClick = onSetupComplete,
-            modifier = Modifier.fillMaxWidth().height(50.dp)
+            shape = RoundedCornerShape(Radius.md),
+            modifier = Modifier.fillMaxWidth().heightIn(min = MinTouchTarget).height(52.dp)
         ) {
             Text("Start FinTrace Dashboard", fontSize = 16.sp, fontWeight = FontWeight.Bold)
         }
