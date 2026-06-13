@@ -272,9 +272,9 @@ fun TerminalContent(
         // High quality telemetry register header with blinking live heart-beat dot
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = if (isLight) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) else Color(0xFF101317),
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Row(
                 modifier = Modifier
