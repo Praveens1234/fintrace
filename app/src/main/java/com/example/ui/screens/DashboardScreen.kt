@@ -54,6 +54,8 @@ fun DashboardScreen(
     val priceState by viewModel.priceState.collectAsState()
     val connStatus by viewModel.connectionStatus.collectAsState()
     val latency by viewModel.latencyMs.collectAsState()
+    val marketOpen by viewModel.marketOpen.collectAsState()
+    val nextMarketChangeAt by viewModel.nextMarketChangeAt.collectAsState()
     val cardStyle by viewModel.dashboardCardStyle.collectAsState()
     val priceTextSize by viewModel.priceTextSize.collectAsState()
     val symbolIdTextSize by viewModel.symbolIdTextSize.collectAsState()
@@ -158,6 +160,11 @@ fun DashboardScreen(
             activeCount = activeSub.size,
             maxLimit = maxLimit
         )
+
+        // Market-closed banner with a live countdown to the next session open.
+        if (!marketOpen) {
+            MarketClosedBanner(nextChangeAt = nextMarketChangeAt)
+        }
 
         if (activeSub.isEmpty()) {
             Box(
@@ -311,6 +318,7 @@ fun ConnectionStatusBar(
     val (dotColor, statusText) = when (status) {
         "LIVE" -> Pair(ConnectionLive, "LIVE")
         "CONNECTING" -> Pair(ConnectionReconnecting, "CONNECTING")
+        "CLOSED" -> Pair(NeutralPrice, "MARKET CLOSED")
         else -> Pair(ConnectionOffline, "OFFLINE")
     }
 
@@ -334,7 +342,7 @@ fun ConnectionStatusBar(
             )
             
             Text(
-                text = "$statusText Mode",
+                text = statusText,
                 style = MaterialTheme.typography.labelMedium.copy(
                     fontWeight = FontWeight.Bold,
                     color = dotColor,
@@ -363,6 +371,75 @@ fun ConnectionStatusBar(
                 fontWeight = FontWeight.Medium,
                 fontSize = 11.sp
             )
+        }
+    }
+}
+
+@Composable
+fun MarketClosedBanner(nextChangeAt: Long) {
+    // Live 1-second countdown to the next session open.
+    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(nextChangeAt) {
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val remaining = (nextChangeAt - nowMs).coerceAtLeast(0L)
+    val totalMin = remaining / 60000
+    val days = totalMin / (60 * 24)
+    val hours = (totalMin / 60) % 24
+    val minutes = totalMin % 60
+    val opensIn = when {
+        days > 0 -> "${days}d ${hours}h"
+        hours > 0 -> "${hours}h ${minutes}m"
+        else -> "${minutes}m"
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+        shape = RoundedCornerShape(Radius.md),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Schedule,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(Spacing.sm))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Market closed",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "Live updates paused to save battery · resumes automatically",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    "OPENS IN",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    opensIn,
+                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = PriceTextFontFamily),
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
         }
     }
 }
@@ -524,7 +601,8 @@ fun PriceMetricCard(
     }
 
     // STATE CONTROLLERS
-    val isOffline = connectionStatus == "OFFLINE"
+    val isOffline = connectionStatus == "OFFLINE" || connectionStatus == "CLOSED"
+    val isClosed = connectionStatus == "CLOSED"
     val elapsedMs = System.currentTimeMillis() - tick.timestamp
     val isStale = !isOffline && (elapsedMs > 30000)
     val isAlerted = activeAlerts.isNotEmpty()
@@ -670,6 +748,7 @@ fun PriceMetricCard(
                         )
                         Text(
                             text = when {
+                                isClosed -> "CLOSED"
                                 isOffline -> "OFFLINE"
                                 isStale -> "STALE"
                                 isAlerted -> "WATCH: $highestPriority"
@@ -830,6 +909,7 @@ fun PriceMetricCard(
                 // Exact state-dependent elapsed time label at bottom
                 Text(
                     text = when {
+                        isClosed -> "market closed (last price)"
                         isOffline -> "offline (last known price)"
                         isStale -> "⚠ stale (${elapsedMs / 1000}s ago)"
                         else -> "updated ${elapsedMs / 1000}s ago"
@@ -1000,7 +1080,8 @@ fun PriceMetricClassicRow(
     }
 
     // STATE CONTROLLERS
-    val isOffline = connectionStatus == "OFFLINE"
+    val isOffline = connectionStatus == "OFFLINE" || connectionStatus == "CLOSED"
+    val isClosed = connectionStatus == "CLOSED"
     val elapsedMs = System.currentTimeMillis() - tick.timestamp
     val isStale = !isOffline && (elapsedMs > 30000)
     val isAlerted = activeAlerts.isNotEmpty()

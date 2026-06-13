@@ -37,6 +37,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val connectionStatus: StateFlow<String> = monitor.connectionStatus
     val latencyMs: StateFlow<Long> = monitor.latencyMs
 
+    // Market session state for the UI (closed banners, "opens in …" countdown).
+    val marketOpen: StateFlow<Boolean> = monitor.marketOpen
+    val nextMarketChangeAt: StateFlow<Long> = monitor.nextMarketChangeAt
+
     // Live Alert List Flow
     val alertList: StateFlow<List<Alert>> = alertDao.getAllAlertsFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

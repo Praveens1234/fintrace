@@ -12,7 +12,9 @@ import com.example.data.model.SymbolState
 import com.example.data.model.TriggerHistory
 import com.example.data.model.formatPriceDynamic
 import com.example.data.model.getDisplayDecimals
+import com.example.data.market.MarketSchedule
 import com.example.service.NotificationHelper
+import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,8 +33,8 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-import kotlin.random.Random
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.isActive
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.ConcurrentHashMap
 
@@ -63,9 +65,16 @@ class PriceMonitorManager private constructor(context: Context) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var connectionJob: Job? = null
-    private var simTickJob: Job? = null
+    private var marketJob: Job? = null
     private var logCounter = 0
     private var reconnectCount = 0
+
+    // Re-check cadences (ms). When closed/standby we poll cheaply (time math only, no network);
+    // when open we re-check connection health hourly. The loop always sleeps until the *exact*
+    // next session boundary when that is sooner, so teardown/resume happen with no drift.
+    private val maxClosedSleepMs = 30 * 60 * 1000L
+    private val standbyRecheckMs = 30 * 60 * 1000L
+    private val openRecheckMs = 60 * 60 * 1000L
 
     @Volatile
     private var isTickLoggingEnabled = true
@@ -196,6 +205,13 @@ class PriceMonitorManager private constructor(context: Context) {
 
     private val _latencyMs = MutableStateFlow(0L)
     val latencyMs: StateFlow<Long> = _latencyMs.asStateFlow()
+
+    // Market session state. _marketOpen reflects the trading calendar; _nextMarketChangeAt is the
+    // epoch-ms of the next open/close transition (used by the UI to show "opens in …").
+    private val _marketOpen = MutableStateFlow(MarketSchedule.isOpenNow())
+    val marketOpen: StateFlow<Boolean> = _marketOpen.asStateFlow()
+    private val _nextMarketChangeAt = MutableStateFlow(MarketSchedule.nextChange().toEpochMilli())
+    val nextMarketChangeAt: StateFlow<Long> = _nextMarketChangeAt.asStateFlow()
 
     private var activeWebSocket: WebSocket? = null
     private val okHttpClient = OkHttpClient.Builder()
@@ -359,51 +375,74 @@ class PriceMonitorManager private constructor(context: Context) {
         return null
     }
 
+    /**
+     * Single market-aware monitoring loop. It evaluates the trading calendar plus screen/alert/
+     * API-key state and either connects the live socket or tears it down, then sleeps until the
+     * exact next session boundary (capped so closed/standby states re-check cheaply as a backstop).
+     * Any external change (screen toggle, setting save, WorkManager tick) cancels and restarts the
+     * loop so it re-evaluates immediately. There is no simulated data: when we can't stream live,
+     * the last real prices simply remain frozen.
+     */
     fun startMonitoringLoop() {
         isolatePool.setupWorkers(4)
-        scope.launch {
-            if (!isScreenOn && !hasActiveAlerts) {
-                // Smart standby state: pause live socket and simulation because there are no alarms and screen is off.
-                logEvent("SYSTEM", null, "Smart standby state active: screen is off and no active alerts are configured. Pausing real-time monitoring to protect CPU and battery.")
-                
-                simTickJob?.cancel()
-                simTickJob = null
-                
-                if (activeWebSocket != null) {
-                    try {
-                        activeWebSocket?.close(1000, "Deep battery save stance")
-                    } catch (e: Exception) {}
-                    activeWebSocket = null
-                }
-                _connectionStatus.value = "OFFLINE"
-                return@launch
-            }
+        marketJob?.cancel()
+        marketJob = scope.launch {
+            while (isActive) {
+                val now = Instant.now()
+                val open = MarketSchedule.isOpen(now)
+                val nextChange = MarketSchedule.nextChange(now)
+                _marketOpen.value = open
+                _nextMarketChangeAt.value = nextChange.toEpochMilli()
+                val untilChange = millisUntil(nextChange)
 
-            val apiKeySetting = getEffectiveApiKey()
-            if (apiKeySetting.isNullOrBlank()) {
-                if (activeWebSocket != null) {
-                    try {
-                        activeWebSocket?.close(1000, "API key removed")
-                    } catch (e: Exception) {}
-                    activeWebSocket = null
+                if (!open) {
+                    closeSocket("Market closed")
+                    _connectionStatus.value = "CLOSED"
+                    logEvent("SYSTEM", null, "Market is closed. Live monitoring paused to save CPU and battery; auto-resume is scheduled for the next session open.")
+                    delay(untilChange.coerceIn(1_000L, maxClosedSleepMs))
+                    continue
                 }
-                _connectionStatus.value = "LIVE" // simulated live
-                if (simTickJob?.isActive != true) {
-                    startSimulation()
+
+                if (!isScreenOn && !hasActiveAlerts) {
+                    // Smart standby: screen off and nothing to alert on — drop the socket for battery.
+                    closeSocket("Smart standby (screen off, no active alerts)")
+                    _connectionStatus.value = "OFFLINE"
+                    logEvent("SYSTEM", null, "Smart standby active: screen off and no active alerts. Live socket paused to protect battery.")
+                    delay(untilChange.coerceIn(1_000L, standbyRecheckMs))
+                    continue
                 }
-            } else {
-                simTickJob?.cancel()
-                simTickJob = null
-                if (activeWebSocket == null || _connectionStatus.value == "OFFLINE") {
-                    connectToTwelveData(apiKeySetting)
+
+                val apiKey = getEffectiveApiKey()
+                if (apiKey.isNullOrBlank()) {
+                    closeSocket("No API key configured")
+                    _connectionStatus.value = "OFFLINE"
+                    logEvent("SYSTEM", null, "No Twelve Data API key configured. Add a key in Settings to receive live prices.")
+                    delay(untilChange.coerceIn(1_000L, standbyRecheckMs))
+                    continue
                 }
+
+                // Market open, interactive/alerting, key present → ensure we are streaming.
+                if (activeWebSocket == null || _connectionStatus.value == "CLOSED" || _connectionStatus.value == "OFFLINE") {
+                    connectToTwelveData(apiKey)
+                }
+                delay(untilChange.coerceIn(1_000L, openRecheckMs))
             }
         }
     }
 
+    private fun millisUntil(instant: Instant): Long =
+        (instant.toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(0L)
+
+    private fun closeSocket(reason: String) {
+        activeWebSocket?.let {
+            try { it.close(1000, reason) } catch (_: Exception) {}
+        }
+        activeWebSocket = null
+    }
+
     fun stopMonitoring() {
+        marketJob?.cancel()
         connectionJob?.cancel()
-        simTickJob?.cancel()
         activeWebSocket?.close(1000, "App closed")
         activeWebSocket = null
 
@@ -421,178 +460,8 @@ class PriceMonitorManager private constructor(context: Context) {
         assetWorkerPool.clear()
     }
 
-    // ── SIMULATION ENGINE ──────────────────────────────────────────────────
-    private fun startSimulation() {
-        connectionJob?.cancel()
-        simTickJob?.cancel()
-        simTickJob = scope.launch {
-            while (true) {
-                val delayTime = if (isScreenOn) {
-                    getUiPriceIntervalSetting()
-                } else {
-                    // Screen off but alerts exist. Update simulation at a battery compliant 10s rate.
-                    10000L
-                }
-                delay(delayTime)
-                tickSimulatedPrices()
-            }
-        }
-    }
-
-    private fun tickSimulatedPrices() {
-        try {
-            val activeList = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
-            
-            // Ensure first initialization exists in _priceState
-            if (_priceState.value.isEmpty()) {
-                _priceState.update { currentMap ->
-                    if (currentMap.isEmpty()) {
-                        val initialMap = mutableMapOf<String, PriceTick>()
-                        SymbolInfo.ALL.forEach { s ->
-                            initialMap[s.symbol] = PriceTick(
-                                symbol = s.symbol,
-                                price = s.defaultPrice,
-                                bid = s.defaultPrice - (0.0004 * s.defaultPrice),
-                                ask = s.defaultPrice + (0.0004 * s.defaultPrice),
-                                history = listOf(s.defaultPrice),
-                                openPrice = s.defaultPrice
-                            )
-                        }
-                        initialMap
-                    } else {
-                        currentMap
-                    }
-                }
-            }
-
-            activeList.forEach { sym ->
-                val dispatcher = getDispatcherForAsset(sym)
-                scope.launch(dispatcher) {
-                    processSingleSimulatedTick(sym)
-                }
-            }
-            _latencyMs.value = Random.nextLong(10, 80)
-        } catch (e: Exception) {
-            Log.e("PriceMonitor", "General Simulation Loop Ticker Error: ${e.message}", e)
-            logEvent("ERROR", null, "Simulation loop breakdown: ${e.localizedMessage}")
-        }
-    }
-
-    private suspend fun tickSimulatedPricesForSymbols(symbols: List<String>) {
-        try {
-            if (_priceState.value.isEmpty()) {
-                _priceState.update { currentMap ->
-                    if (currentMap.isEmpty()) {
-                        val initialMap = mutableMapOf<String, PriceTick>()
-                        SymbolInfo.ALL.forEach { s ->
-                            initialMap[s.symbol] = PriceTick(
-                                symbol = s.symbol,
-                                price = s.defaultPrice,
-                                bid = s.defaultPrice - (0.0004 * s.defaultPrice),
-                                ask = s.defaultPrice + (0.0004 * s.defaultPrice),
-                                history = listOf(s.defaultPrice),
-                                openPrice = s.defaultPrice
-                            )
-                        }
-                        initialMap
-                    } else {
-                        currentMap
-                    }
-                }
-            }
-
-            symbols.forEach { sym ->
-                val dispatcher = getDispatcherForAsset(sym)
-                scope.launch(dispatcher) {
-                    processSingleSimulatedTick(sym)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("PriceMonitor", "General Simulation fallback error: ${e.message}", e)
-        }
-    }
-
-    private suspend fun processSingleSimulatedTick(sym: String) {
-        try {
-            val info = SymbolInfo.find(sym)
-            var prevPrice = info.defaultPrice
-            var openPrice = info.defaultPrice
-            var newPrice = info.defaultPrice
-
-            _priceState.update { currentMap ->
-                val currentTick = currentMap[sym] ?: PriceTick(sym, info.defaultPrice)
-                prevPrice = currentTick.price
-                openPrice = currentTick.openPrice ?: info.defaultPrice
-
-                val volatility = when (info.category) {
-                    "Metals" -> 0.0003
-                    "Majors" -> 0.00008
-                    else -> 0.00015
-                }
-                val deviationPct = (prevPrice - info.defaultPrice) / info.defaultPrice
-                val pullSpeed = 0.04
-                val drift = -deviationPct * pullSpeed
-                
-                val changePercent = (Random.nextDouble() - 0.5) * 2.0 * volatility + drift
-                val priceChange = prevPrice * changePercent
-                
-                val minPrice = info.defaultPrice * 0.96
-                val maxPrice = info.defaultPrice * 1.04
-                newPrice = (prevPrice + priceChange).coerceIn(minPrice, maxPrice)
-
-                val spreadFactor = when (info.category) {
-                    "Metals" -> 0.0002
-                    "Majors" -> 0.0001
-                    else -> 0.00015
-                }
-                val spreadVal = newPrice * spreadFactor
-                val bid = newPrice - (spreadVal / 2)
-                val ask = newPrice + (spreadVal / 2)
-
-                val netChange = newPrice - openPrice
-                val netChangePct = if (openPrice > 0.0) (netChange / openPrice) * 100 else 0.0
-
-                val oldHistory = currentTick.history
-                val newHistory = (oldHistory + newPrice).takeLast(20)
-
-                val updatedTick = PriceTick(
-                    symbol = sym,
-                    price = newPrice,
-                    change = netChange,
-                    changePercent = netChangePct,
-                    bid = bid,
-                    ask = ask,
-                    history = newHistory,
-                    openPrice = openPrice
-                )
-
-                val newMap = currentMap.toMutableMap()
-                newMap[sym] = updatedTick
-                newMap
-            }
-
-            // Dedicated asset worker thread evaluates threshold alerts
-            evaluateAlerts(sym, prevPrice, newPrice)
-
-            val displayDecs = info.getDisplayDecimals()
-            val netChange = newPrice - openPrice
-            val netChangePct = if (openPrice > 0.0) (netChange / openPrice) * 100 else 0.0
-            val changeStr = if (netChange >= 0) "+${netChange.formatPriceDynamic(displayDecs)}" else netChange.formatPriceDynamic(displayDecs)
-            val pctStr = if (netChangePct >= 0) "+${String.format(Locale.US, "%.2f", netChangePct)}%" else "${String.format(Locale.US, "%.2f", netChangePct)}%"
-            val formattedPrice = newPrice.formatPriceDynamic(displayDecs)
-            
-            // Log with the dedicated Thread name to show visual evidence that each asset runs on its own background thread!
-            logEvent("TICK", sym, "[${Thread.currentThread().name}] $sym ticked simulated at $formattedPrice ($changeStr | $pctStr)")
-
-            scheduleSystemUpdates()
-        } catch (e: Exception) {
-            Log.e("PriceMonitor", "Error generating simulated tick for $sym in worker: ${e.message}", e)
-        }
-    }
-
     // ── TWELVE DATA SOCKET INTEGRATION ────────────────────────────────────
     private fun connectToTwelveData(apiKey: String) {
-        simTickJob?.cancel()
         connectionJob?.cancel()
         connectionJob = scope.launch {
             _connectionStatus.value = "CONNECTING"
@@ -663,26 +532,6 @@ class PriceMonitorManager private constructor(context: Context) {
                 }
             }
 
-            // Watchdog fallback simulation ticker for stale active symbols under WebSocket mode
-            launch {
-                while (true) {
-                    delay(5000) // check every 5 seconds
-                    if (_connectionStatus.value == "LIVE") {
-                        val now = System.currentTimeMillis()
-                        val activeList = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
-                        val staleList = activeList.filter { sym ->
-                            val lastUpdateTime = lastSymbolUpdateTimes[sym] ?: 0L
-                            now - lastUpdateTime >= 12000L
-                        }
-                        if (staleList.isNotEmpty()) {
-                            staleList.forEach { sym ->
-                                lastSymbolUpdateTimes[sym] = now
-                            }
-                            tickSimulatedPricesForSymbols(staleList)
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -709,6 +558,13 @@ class PriceMonitorManager private constructor(context: Context) {
                 else -> 30000L
             }
             delay(delayMs)
+            // Don't fight the calendar or burn battery: skip reconnect if the market closed or we
+            // dropped into smart standby. The monitoring loop will reconnect when conditions return.
+            if (!MarketSchedule.isOpenNow()) {
+                _connectionStatus.value = "CLOSED"
+                return@launch
+            }
+            if (!isScreenOn && !hasActiveAlerts) return@launch
             if (_connectionStatus.value != "LIVE") {
                 connectToTwelveData(apiKey)
             }
@@ -864,11 +720,10 @@ class PriceMonitorManager private constructor(context: Context) {
                 _hasActiveAlertsFlow.value = hasActiveAlerts
                 
                 Log.d("PriceMonitor", "One-shot WorkManager sync executed. Active alerts: ${activeList.size}")
-                
-                val activeSymbolsToUpdate = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
-                if (activeSymbolsToUpdate.isNotEmpty()) {
-                    tickSimulatedPricesForSymbols(activeSymbolsToUpdate)
-                }
+
+                // Backstop: re-evaluate the market-aware monitoring loop so that, even if the
+                // in-process scheduler was killed, we reconnect promptly once the market is open.
+                startMonitoringLoop()
             } catch (e: Exception) {
                 Log.e("PriceMonitor", "Error during one-shot background synchronization check: ${e.message}")
             }
