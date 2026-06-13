@@ -37,6 +37,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.isActive
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.ConcurrentHashMap
+import com.example.data.provider.PriceProvider
 
 class PriceMonitorManager private constructor(context: Context) {
 
@@ -94,6 +95,17 @@ class PriceMonitorManager private constructor(context: Context) {
 
     @Volatile
     private var cachedPriceUpdateIntervalMs = 500L
+
+    @Volatile
+    private var activeProvider: PriceProvider = PriceProvider.TWELVE_DATA
+
+    @Volatile
+    private var avPollingJob: Job? = null
+
+    @Volatile
+    private var cachedTtsLanguage = "en-US"
+
+    fun getTtsLanguage(): String = cachedTtsLanguage
 
     suspend fun getWebsocketUseNativeMode(): Boolean {
         return isNativeModeEnabled
@@ -248,6 +260,8 @@ class PriceMonitorManager private constructor(context: Context) {
             isTickLoggingEnabled = (getSetting("tick_logging_enabled") ?: "true") == "true"
             isNativeModeEnabled = (getSetting("websocket_use_native_mode") ?: "true") == "true"
             cachedPriceUpdateIntervalMs = getUiPriceIntervalSettingFromDb()
+            cachedTtsLanguage = getSetting("tts_language") ?: "en-US"
+            // activeProvider is re-read each loop iteration; no need to cache here
 
             // Reactively fetch and cache active alerts presence to avoid recurring SQLite operations
             launch {
@@ -349,30 +363,31 @@ class PriceMonitorManager private constructor(context: Context) {
         }
     }
 
-    suspend fun getEffectiveApiKey(): String? {
-        val dbKey = getSetting("twelve_data_api_key")
-        if (!dbKey.isNullOrBlank()) {
-            return dbKey
-        }
+    suspend fun getEffectiveApiKeyForProvider(provider: PriceProvider): String? {
+        val dbKey = getSetting(provider.apiKeySettingKey)
+        if (!dbKey.isNullOrBlank()) return dbKey
 
-        val buildConfigKey = try {
-            com.example.BuildConfig.TWELVE_DATA_API_KEY
-        } catch (e: Throwable) {
-            null
-        }
-        if (!buildConfigKey.isNullOrBlank() && 
-            buildConfigKey != "YOUR_TWELVE_DATA_API_KEY_HERE" && 
-            buildConfigKey != "TWELVE_DATA_API_KEY"
-        ) {
-            return buildConfigKey
-        }
+        // Twelve Data also supports BuildConfig / system environment variable fallback
+        if (provider == PriceProvider.TWELVE_DATA) {
+            val buildConfigKey = try {
+                com.example.BuildConfig.TWELVE_DATA_API_KEY
+            } catch (e: Throwable) { null }
+            if (!buildConfigKey.isNullOrBlank() &&
+                buildConfigKey != "YOUR_TWELVE_DATA_API_KEY_HERE" &&
+                buildConfigKey != "TWELVE_DATA_API_KEY"
+            ) return buildConfigKey
 
-        val sysEnvKey = System.getenv("TWELVE_DATA_API_KEY") ?: System.getenv("TWELVEDATA_API_KEY")
-        if (!sysEnvKey.isNullOrBlank()) {
-            return sysEnvKey
+            val sysEnvKey = System.getenv("TWELVE_DATA_API_KEY") ?: System.getenv("TWELVEDATA_API_KEY")
+            if (!sysEnvKey.isNullOrBlank()) return sysEnvKey
         }
-
         return null
+    }
+
+    suspend fun getEffectiveApiKey(): String? = getEffectiveApiKeyForProvider(PriceProvider.TWELVE_DATA)
+
+    suspend fun getActiveProvider(): PriceProvider {
+        val raw = getSetting("active_price_provider") ?: return PriceProvider.TWELVE_DATA
+        return PriceProvider.entries.find { it.name == raw } ?: PriceProvider.TWELVE_DATA
     }
 
     /**
@@ -396,34 +411,43 @@ class PriceMonitorManager private constructor(context: Context) {
                 val untilChange = millisUntil(nextChange)
 
                 if (!open) {
-                    closeSocket("Market closed")
+                    closeConnections("Market closed")
                     _connectionStatus.value = "CLOSED"
-                    logEvent("SYSTEM", null, "Market is closed. Live monitoring paused to save CPU and battery; auto-resume is scheduled for the next session open.")
+                    logEvent("SYSTEM", null, "Market is closed. Live monitoring paused to save CPU and battery; auto-resume scheduled for next session open.")
                     delay(untilChange.coerceIn(1_000L, maxClosedSleepMs))
                     continue
                 }
 
                 if (!isScreenOn && !hasActiveAlerts) {
-                    // Smart standby: screen off and nothing to alert on — drop the socket for battery.
-                    closeSocket("Smart standby (screen off, no active alerts)")
+                    closeConnections("Smart standby (screen off, no active alerts)")
                     _connectionStatus.value = "OFFLINE"
                     logEvent("SYSTEM", null, "Smart standby active: screen off and no active alerts. Live socket paused to protect battery.")
                     delay(untilChange.coerceIn(1_000L, standbyRecheckMs))
                     continue
                 }
 
-                val apiKey = getEffectiveApiKey()
+                val provider = getActiveProvider()
+                activeProvider = provider
+                val apiKey = getEffectiveApiKeyForProvider(provider)
                 if (apiKey.isNullOrBlank()) {
-                    closeSocket("No API key configured")
+                    closeConnections("No API key configured for ${provider.displayName}")
                     _connectionStatus.value = "OFFLINE"
-                    logEvent("SYSTEM", null, "No Twelve Data API key configured. Add a key in Settings to receive live prices.")
+                    logEvent("SYSTEM", null, "No ${provider.displayName} API key configured. Add a key in Settings → Connection & Market Feed.")
                     delay(untilChange.coerceIn(1_000L, standbyRecheckMs))
                     continue
                 }
 
-                // Market open, interactive/alerting, key present → ensure we are streaming.
-                if (activeWebSocket == null || _connectionStatus.value == "CLOSED" || _connectionStatus.value == "OFFLINE") {
-                    connectToTwelveData(apiKey)
+                when (provider) {
+                    PriceProvider.ALPHA_VANTAGE -> {
+                        if (avPollingJob == null || avPollingJob?.isActive != true) {
+                            startAlphaVantagePolling(apiKey)
+                        }
+                    }
+                    else -> {
+                        if (activeWebSocket == null || _connectionStatus.value == "CLOSED" || _connectionStatus.value == "OFFLINE") {
+                            connectToProvider(apiKey, provider)
+                        }
+                    }
                 }
                 delay(untilChange.coerceIn(1_000L, openRecheckMs))
             }
@@ -433,16 +457,22 @@ class PriceMonitorManager private constructor(context: Context) {
     private fun millisUntil(instant: Instant): Long =
         (instant.toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(0L)
 
-    private fun closeSocket(reason: String) {
+    private fun closeConnections(reason: String) {
         activeWebSocket?.let {
             try { it.close(1000, reason) } catch (_: Exception) {}
         }
         activeWebSocket = null
+        avPollingJob?.cancel()
+        avPollingJob = null
     }
+
+    private fun closeSocket(reason: String) = closeConnections(reason)
 
     fun stopMonitoring() {
         marketJob?.cancel()
         connectionJob?.cancel()
+        avPollingJob?.cancel()
+        avPollingJob = null
         activeWebSocket?.close(1000, "App closed")
         activeWebSocket = null
 
@@ -498,14 +528,14 @@ class PriceMonitorManager private constructor(context: Context) {
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     _connectionStatus.value = "OFFLINE"
                     logEvent("SYSTEM", null, "Twelve Data Connection closed: $reason")
-                    attemptReconnect(apiKey)
+                    attemptReconnect(apiKey, PriceProvider.TWELVE_DATA)
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     reconnectCount++
                     _connectionStatus.value = "OFFLINE"
                     logEvent("ERROR", null, "Twelve Data connection failed (${t.message ?: "Unknown socket error"}). Live streaming interrupted. Freezing on the last updated price. Attempting background retry #$reconnectCount...")
-                    attemptReconnect(apiKey)
+                    attemptReconnect(apiKey, PriceProvider.TWELVE_DATA)
                 }
             })
 
@@ -535,6 +565,179 @@ class PriceMonitorManager private constructor(context: Context) {
         }
     }
 
+    private fun connectToProvider(apiKey: String, provider: PriceProvider) {
+        when (provider) {
+            PriceProvider.TWELVE_DATA -> connectToTwelveData(apiKey)
+            PriceProvider.FINNHUB -> connectToFinnhub(apiKey)
+            PriceProvider.ALPHA_VANTAGE -> startAlphaVantagePolling(apiKey)
+        }
+    }
+
+    private fun connectToFinnhub(apiKey: String) {
+        connectionJob?.cancel()
+        connectionJob = scope.launch {
+            _connectionStatus.value = "CONNECTING"
+            logEvent("SYSTEM", null, "Connecting to Finnhub WebSocket feed...")
+            val request = Request.Builder()
+                .url("wss://ws.finnhub.io?token=$apiKey")
+                .build()
+
+            activeWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    _connectionStatus.value = "LIVE"
+                    reconnectCount = 0
+                    logEvent("SYSTEM", null, "Connected to Finnhub WebSocket successfully.")
+                    val activeList = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
+                    activeList.forEach { sym ->
+                        try {
+                            val sub = JSONObject()
+                            sub.put("type", "subscribe")
+                            sub.put("symbol", toFinnhubSymbol(sym))
+                            webSocket.send(sub.toString())
+                        } catch (e: Exception) {
+                            Log.e("PriceMonitor", "Finnhub subscribe error: ${e.message}")
+                        }
+                    }
+                    startHeartbeat(webSocket)
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    try {
+                        val json = JSONObject(text)
+                        when (json.optString("type")) {
+                            "trade" -> {
+                                val data = json.optJSONArray("data") ?: return
+                                for (i in 0 until data.length()) {
+                                    val trade = data.getJSONObject(i)
+                                    val finnhubSymbol = trade.optString("s")
+                                    val price = trade.optDouble("p")
+                                    if (finnhubSymbol.isNotBlank() && !price.isNaN() && price > 0) {
+                                        val appSymbol = fromFinnhubSymbol(finnhubSymbol)
+                                        if (appSymbol.isNotBlank()) {
+                                            val normalized = JSONObject()
+                                            normalized.put("event", "price")
+                                            normalized.put("symbol", appSymbol)
+                                            normalized.put("price", price)
+                                            isolatePool.dispatch(normalized.toString())
+                                        }
+                                    }
+                                }
+                            }
+                            "error" -> {
+                                val msg = json.optString("msg")
+                                logEvent("ERROR", null, "Finnhub error: $msg")
+                            }
+                            "ping", "no_data", "connected" -> { /* protocol messages — no action */ }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("PriceMonitor", "Finnhub message parse: ${e.message}")
+                    }
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    _connectionStatus.value = "OFFLINE"
+                    logEvent("SYSTEM", null, "Finnhub connection closed: $reason")
+                    attemptReconnect(apiKey, PriceProvider.FINNHUB)
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    reconnectCount++
+                    _connectionStatus.value = "OFFLINE"
+                    logEvent("ERROR", null, "Finnhub connection failed (${t.message}). Retry #$reconnectCount...")
+                    attemptReconnect(apiKey, PriceProvider.FINNHUB)
+                }
+            })
+
+            // Dynamic subscription sync
+            launch {
+                kotlinx.coroutines.flow.combine(_activeSymbols, _liveTickerSymbols) { active, ticker ->
+                    (active + ticker).distinct()
+                }.collect { list ->
+                    val ws = activeWebSocket
+                    if (_connectionStatus.value == "LIVE" && ws != null) {
+                        list.forEach { sym ->
+                            try {
+                                val sub = JSONObject()
+                                sub.put("type", "subscribe")
+                                sub.put("symbol", toFinnhubSymbol(sym))
+                                ws.send(sub.toString())
+                            } catch (e: Exception) {
+                                Log.e("PriceMonitor", "Finnhub subscription sync error: ${e.message}")
+                            }
+                        }
+                        logEvent("SYSTEM", null, "Synced Finnhub subscriptions: ${list.joinToString(", ")}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun startAlphaVantagePolling(apiKey: String) {
+        avPollingJob?.cancel()
+        avPollingJob = scope.launch(Dispatchers.IO) {
+            _connectionStatus.value = "CONNECTING"
+            logEvent("SYSTEM", null, "Starting Alpha Vantage REST polling feed (free tier: 25 calls/day, 5 calls/min)...")
+            val avClient = OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .build()
+            _connectionStatus.value = "LIVE"
+            reconnectCount = 0
+
+            var symbolIndex = 0
+            while (isActive && MarketSchedule.isOpenNow()) {
+                val symbols = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
+                if (symbols.isEmpty()) { delay(15_000L); continue }
+
+                val sym = symbols[symbolIndex % symbols.size]
+                symbolIndex++
+
+                try {
+                    val parts = sym.split("/")
+                    val from = parts.getOrElse(0) { "" }
+                    val to = parts.getOrElse(1) { "USD" }
+                    if (from.isBlank()) { delay(1_000L); continue }
+
+                    val url = "https://www.alphavantage.co/query" +
+                        "?function=CURRENCY_EXCHANGE_RATE" +
+                        "&from_currency=$from" +
+                        "&to_currency=$to" +
+                        "&apikey=$apiKey"
+                    val resp = avClient.newCall(Request.Builder().url(url).build()).execute()
+                    val body = resp.body?.string() ?: run { delay(13_000L); continue }
+
+                    val json = JSONObject(body)
+                    val rateObj = json.optJSONObject("Realtime Currency Exchange Rate")
+                    if (rateObj != null) {
+                        val price = rateObj.optString("5. Exchange Rate").toDoubleOrNull()
+                        if (price != null && price > 0) {
+                            processSinglePriceUpdateFromIsolate(-1, sym, price, System.currentTimeMillis())
+                        }
+                    } else if (json.has("Note") || json.has("Information")) {
+                        logEvent("SYSTEM", sym, "Alpha Vantage rate limit reached — waiting 65 s before retry.")
+                        delay(65_000L)
+                        continue
+                    } else if (json.has("Error Message")) {
+                        logEvent("ERROR", sym, "Alpha Vantage: ${json.optString("Error Message")}")
+                    }
+                } catch (e: Exception) {
+                    logEvent("ERROR", sym, "Alpha Vantage fetch error: ${e.message}")
+                }
+
+                // Free tier: 5 calls / min → 13 s minimum between calls
+                delay(13_000L)
+            }
+            _connectionStatus.value = "OFFLINE"
+            logEvent("SYSTEM", null, "Alpha Vantage polling stopped.")
+        }
+    }
+
+    private fun toFinnhubSymbol(appSymbol: String): String =
+        "OANDA:" + appSymbol.replace("/", "_")
+
+    private fun fromFinnhubSymbol(finnhubSymbol: String): String =
+        finnhubSymbol.removePrefix("OANDA:").replace("_", "/")
+
     private fun startHeartbeat(webSocket: WebSocket) {
         scope.launch {
             while (_connectionStatus.value == "LIVE" && activeWebSocket == webSocket) {
@@ -550,7 +753,7 @@ class PriceMonitorManager private constructor(context: Context) {
         }
     }
 
-    private fun attemptReconnect(apiKey: String) {
+    private fun attemptReconnect(apiKey: String, provider: PriceProvider = PriceProvider.TWELVE_DATA) {
         scope.launch {
             val delayMs = when {
                 reconnectCount <= 1 -> 5000L
@@ -558,15 +761,13 @@ class PriceMonitorManager private constructor(context: Context) {
                 else -> 30000L
             }
             delay(delayMs)
-            // Don't fight the calendar or burn battery: skip reconnect if the market closed or we
-            // dropped into smart standby. The monitoring loop will reconnect when conditions return.
             if (!MarketSchedule.isOpenNow()) {
                 _connectionStatus.value = "CLOSED"
                 return@launch
             }
             if (!isScreenOn && !hasActiveAlerts) return@launch
             if (_connectionStatus.value != "LIVE") {
-                connectToTwelveData(apiKey)
+                connectToProvider(apiKey, provider)
             }
         }
     }
@@ -687,17 +888,15 @@ class PriceMonitorManager private constructor(context: Context) {
         }
 
         // Auto restart loop if API key or update interval shifts
-        if (key == "twelve_data_api_key") {
-            if (activeWebSocket != null) {
-                try {
-                    activeWebSocket?.close(1000, "API key changed")
-                } catch (e: Exception) {}
-                activeWebSocket = null
-            }
+        if (key == "twelve_data_api_key" || key == "finnhub_api_key" ||
+            key == "alpha_vantage_api_key" || key == "active_price_provider") {
+            closeConnections("Provider or API key changed")
             _connectionStatus.value = "OFFLINE"
             startMonitoringLoop()
         } else if (key == "ui_price_update_interval_ms") {
             startMonitoringLoop()
+        } else if (key == "tts_language") {
+            cachedTtsLanguage = value
         }
     }
 

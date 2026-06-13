@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.SymbolInfo
+import com.example.data.provider.PriceProvider
 import com.example.ui.theme.AlertCritical
 import com.example.ui.theme.ConnectionLive
 import com.example.ui.theme.Radius
@@ -111,6 +112,10 @@ fun SettingsScreen(
 ) {
     val apiKey by viewModel.apiKey.collectAsState()
     val isEnvApiKeyActive by viewModel.isEnvApiKeyActive.collectAsState()
+    val activeProvider by viewModel.activeProvider.collectAsState()
+    val finnhubApiKey by viewModel.finnhubApiKey.collectAsState()
+    val alphaVantageApiKey by viewModel.alphaVantageApiKey.collectAsState()
+    val ttsLanguage by viewModel.ttsLanguage.collectAsState()
     val updateInterval by viewModel.priceUpdateIntervalMs.collectAsState()
     val websocketUseNativeMode by viewModel.websocketUseNativeMode.collectAsState()
     val cardStyle by viewModel.dashboardCardStyle.collectAsState()
@@ -234,49 +239,143 @@ fun SettingsScreen(
 
             AnimatedVisibility(visible = billingExpanded) {
                 SettingCard {
-                    SectionLabel("CONNECTION PARAMETERS")
+                    SectionLabel("DATA PROVIDER")
 
-                    OutlinedTextField(
-                        value = apiKey,
-                        onValueChange = { viewModel.saveApiKey(it) },
-                        label = { Text("Twelve Data API Key") },
-                        placeholder = { Text("e.g. your_twelve_data_key") },
-                        shape = MaterialTheme.shapes.small,
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    if (isEnvApiKeyActive) {
-                        Surface(
-                            color = ConnectionLive.copy(alpha = 0.10f),
-                            shape = MaterialTheme.shapes.small,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(Spacing.sm),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        PriceProvider.entries.forEach { provider ->
+                            val isSelected = activeProvider == provider.name
+                            Surface(
+                                onClick = { viewModel.saveActiveProvider(provider.name) },
+                                shape = MaterialTheme.shapes.small,
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                                        else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Icon(
-                                    Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    tint = ConnectionLive,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    "API key active via environment variable.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = ConnectionLive,
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                                Row(
+                                    modifier = Modifier.padding(Spacing.sm),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    RadioButton(
+                                        selected = isSelected,
+                                        onClick = { viewModel.saveActiveProvider(provider.name) },
+                                        modifier = Modifier.padding(top = 2.dp)
+                                    )
+                                    Column(modifier = Modifier.padding(start = Spacing.xs)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                                        ) {
+                                            Text(
+                                                provider.displayName,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                                        else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Surface(
+                                                shape = MaterialTheme.shapes.extraSmall,
+                                                color = if (provider.supportsWebSocket)
+                                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                else MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                                            ) {
+                                                Text(
+                                                    if (provider.supportsWebSocket) "WS" else "REST",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (provider.supportsWebSocket)
+                                                        MaterialTheme.colorScheme.primary
+                                                    else MaterialTheme.colorScheme.secondary,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            provider.description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                             }
                         }
-                    } else {
-                        Text(
-                            "Provide your Twelve Data key for real-time market feeds. Without a key the app connects but receives no price data.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    // Per-provider API key field
+                    val selectedProvider = PriceProvider.entries.find { it.name == activeProvider }
+                        ?: PriceProvider.TWELVE_DATA
+
+                    SectionLabel("${selectedProvider.displayName.uppercase(java.util.Locale.US)} API KEY")
+
+                    when (selectedProvider) {
+                        PriceProvider.TWELVE_DATA -> {
+                            OutlinedTextField(
+                                value = apiKey,
+                                onValueChange = { viewModel.saveApiKey(it) },
+                                label = { Text("Twelve Data API Key") },
+                                placeholder = { Text("e.g. your_twelve_data_key") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            if (isEnvApiKeyActive) {
+                                Surface(
+                                    color = ConnectionLive.copy(alpha = 0.10f),
+                                    shape = MaterialTheme.shapes.small,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(Spacing.sm),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                                    ) {
+                                        Icon(Icons.Default.CheckCircle, null, tint = ConnectionLive, modifier = Modifier.size(16.dp))
+                                        Text("API key active via environment variable.", style = MaterialTheme.typography.bodySmall, color = ConnectionLive, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                            } else {
+                                Text("Get your free API key at twelvedata.com", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        PriceProvider.FINNHUB -> {
+                            OutlinedTextField(
+                                value = finnhubApiKey,
+                                onValueChange = { viewModel.saveFinnhubApiKey(it) },
+                                label = { Text("Finnhub API Key") },
+                                placeholder = { Text("e.g. your_finnhub_key") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("Get your free API key at finnhub.io — includes real-time forex streaming.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        PriceProvider.ALPHA_VANTAGE -> {
+                            OutlinedTextField(
+                                value = alphaVantageApiKey,
+                                onValueChange = { viewModel.saveAlphaVantageApiKey(it) },
+                                label = { Text("Alpha Vantage API Key") },
+                                placeholder = { Text("e.g. your_av_key") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = MaterialTheme.shapes.small,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(modifier = Modifier.padding(Spacing.sm), horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                    Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(16.dp))
+                                    Text(
+                                        "Free tier: 25 API calls/day, 5 calls/min. Prices update one symbol every ~13 s. Get key at alphavantage.co",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -291,16 +390,21 @@ fun SettingsScreen(
                                 selected = if (isNative) websocketUseNativeMode else !websocketUseNativeMode,
                                 onClick = { viewModel.saveWebsocketUseNativeMode(isNative) },
                                 shape = SegmentedButtonDefaults.itemShape(index, streamOptions.size),
-                                modifier = Modifier.testTag(
-                                    if (isNative) "tick_mode_native_button" else "tick_mode_interval_button"
-                                )
+                                modifier = Modifier.testTag(if (isNative) "tick_mode_native_button" else "tick_mode_interval_button"),
+                                enabled = selectedProvider.supportsWebSocket
                             ) {
                                 Text(option, style = MaterialTheme.typography.labelMedium)
                             }
                         }
                     }
 
-                    if (websocketUseNativeMode) {
+                    if (!selectedProvider.supportsWebSocket) {
+                        Text(
+                            "Stream sync mode is not applicable for REST polling providers.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    } else if (websocketUseNativeMode) {
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer,
                             shape = MaterialTheme.shapes.small,
@@ -311,47 +415,34 @@ fun SettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
                             ) {
-                                Icon(
-                                    Icons.Default.Bolt,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    "Native Mode: Twelve Data stream pushes prices in real-time, bypassing update intervals.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
+                                Icon(Icons.Default.Bolt, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(16.dp))
+                                Text("Native Mode: prices pushed in real-time, bypassing update intervals.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
                             }
                         }
                     }
 
                     SettingRow(
                         title = "Price Update Interval",
-                        subtitle = if (websocketUseNativeMode) "Disable Native Mode to configure"
+                        subtitle = if (!selectedProvider.supportsWebSocket) "N/A — REST polling uses fixed 13 s cadence"
+                                   else if (websocketUseNativeMode) "Disable Native Mode to configure"
                                    else "Throttle latency: 100 ms – 10 s",
-                        enabled = !websocketUseNativeMode
+                        enabled = selectedProvider.supportsWebSocket && !websocketUseNativeMode
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = if (websocketUseNativeMode) Modifier.alpha(0.38f) else Modifier.alpha(1f)
+                            modifier = Modifier.alpha(if (selectedProvider.supportsWebSocket && !websocketUseNativeMode) 1f else 0.38f)
                         ) {
                             IconButton(
                                 onClick = { viewModel.savePriceUpdateInterval(updateInterval - 50) },
-                                enabled = !websocketUseNativeMode
+                                enabled = selectedProvider.supportsWebSocket && !websocketUseNativeMode
                             ) {
                                 Icon(Icons.Default.RemoveCircleOutline, null, modifier = Modifier.size(20.dp))
                             }
-                            Text(
-                                "$updateInterval ms",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.widthIn(min = 64.dp),
-                                textAlign = TextAlign.Center
-                            )
+                            Text("$updateInterval ms", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.widthIn(min = 64.dp), textAlign = TextAlign.Center)
                             IconButton(
                                 onClick = { viewModel.savePriceUpdateInterval(updateInterval + 50) },
-                                enabled = !websocketUseNativeMode
+                                enabled = selectedProvider.supportsWebSocket && !websocketUseNativeMode
                             ) {
                                 Icon(Icons.Default.AddCircleOutline, null, modifier = Modifier.size(20.dp))
                             }
@@ -361,21 +452,10 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            "Price Decimal Precision",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            "Limit displayed decimal places. 'MAX' preserves native precision.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = Spacing.sm)
-                        )
+                        Text("Price Decimal Precision", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Text("Limit displayed decimal places. 'MAX' preserves native precision.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = Spacing.sm))
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -384,33 +464,20 @@ fun SettingsScreen(
                                 FilterChip(
                                     selected = isSel,
                                     onClick = { viewModel.savePricePrecisionOverride(mode) },
-                                    label = {
-                                        Text(
-                                            mode,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
-                                        )
-                                    }
+                                    label = { Text(mode, style = MaterialTheme.typography.bodySmall, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal) }
                                 )
                             }
                         }
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
                     SectionLabel("APPLICATION BEHAVIOR")
 
-                    SettingRow(
-                        title = "Fluctuation Haptic Feedback",
-                        subtitle = "Discreet vibration on price tick updates"
-                    ) {
+                    SettingRow(title = "Fluctuation Haptic Feedback", subtitle = "Discreet vibration on price tick updates") {
                         Switch(checked = hapticEnabled, onCheckedChange = { viewModel.saveHapticFeedbackEnabled(it) })
                     }
 
-                    SettingRow(
-                        title = "Auto-Start on Boot",
-                        subtitle = "Restores the tracker automatically after reboot"
-                    ) {
+                    SettingRow(title = "Auto-Start on Boot", subtitle = "Restores the tracker automatically after reboot") {
                         Switch(checked = autoStart, onCheckedChange = { viewModel.saveAutoStartOnBoot(it) })
                     }
                 }
@@ -737,6 +804,28 @@ fun SettingsScreen(
                             Text("Test Alarm", style = MaterialTheme.typography.labelMedium)
                         }
                     }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    SectionLabel("VOICE ANNOUNCEMENT LANGUAGE")
+
+                    val ttsOptions = listOf("en-US" to "English", "hi-IN" to "हिन्दी")
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        ttsOptions.forEachIndexed { index, (tag, label) ->
+                            SegmentedButton(
+                                selected = ttsLanguage == tag,
+                                onClick = { viewModel.saveTtsLanguage(tag) },
+                                shape = SegmentedButtonDefaults.itemShape(index, ttsOptions.size)
+                            ) {
+                                Text(label, style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
+                    Text(
+                        "Language used for spoken alert announcements (TTS). Hindi requires Google TTS engine installed on device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
