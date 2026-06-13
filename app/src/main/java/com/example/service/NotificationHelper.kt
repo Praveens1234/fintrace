@@ -20,7 +20,7 @@ import com.example.data.model.PriceTick
 import com.example.data.model.SymbolInfo
 import com.example.data.model.formatPriceDynamic
 import com.example.data.model.getDisplayDecimals
-import java.text.DecimalFormat
+import java.util.Locale
 
 object NotificationHelper {
 
@@ -171,7 +171,7 @@ object NotificationHelper {
             )
             val priceStr = tick.price.formatPriceDynamic(info.getDisplayDecimals())
             val dir = if (tick.change >= 0) "▲" else "▼"
-            val pct = String.format("%.2f%%", kotlin.math.abs(tick.changePercent))
+            val pct = String.format(Locale.US, "%.2f%%", kotlin.math.abs(tick.changePercent))
             "$sym ($dir $priceStr · $pct)"
         }
 

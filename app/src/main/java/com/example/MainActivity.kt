@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.example.ui.screens.*
 import com.example.ui.theme.FinTraceTheme
 import com.example.viewmodel.MainViewModel
@@ -78,33 +79,32 @@ class MainActivity : ComponentActivity() {
                             Scaffold(
                                 bottomBar = {
                                     NavigationBar(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                                        tonalElevation = 0.dp,
                                         windowInsets = WindowInsets.navigationBars
                                     ) {
-                                        NavigationBarItem(
-                                            selected = currentTab == "prices",
-                                            onClick = { currentTab = "prices" },
-                                            icon = { Icon(Icons.Default.TrendingUp, contentDescription = null) },
-                                            label = { Text("Prices") }
+                                        val navItemColors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
-                                        NavigationBarItem(
-                                            selected = currentTab == "alerts",
-                                            onClick = { currentTab = "alerts" },
-                                            icon = { Icon(Icons.Default.Notifications, contentDescription = null) },
-                                            label = { Text("Alerts") }
+                                        val tabs = listOf(
+                                            Triple("prices", Icons.Default.TrendingUp, "Prices"),
+                                            Triple("alerts", Icons.Default.Notifications, "Alerts"),
+                                            Triple("logs", Icons.Default.History, "Logs"),
+                                            Triple("settings", Icons.Default.Settings, "Settings")
                                         )
-                                        NavigationBarItem(
-                                            selected = currentTab == "logs",
-                                            onClick = { currentTab = "logs" },
-                                            icon = { Icon(Icons.Default.History, contentDescription = null) },
-                                            label = { Text("Logs") }
-                                        )
-                                        NavigationBarItem(
-                                            selected = currentTab == "settings",
-                                            onClick = { currentTab = "settings" },
-                                            icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                                            label = { Text("Settings") }
-                                        )
+                                        tabs.forEach { (route, icon, label) ->
+                                            NavigationBarItem(
+                                                selected = currentTab == route,
+                                                onClick = { currentTab = route },
+                                                icon = { Icon(icon, contentDescription = label) },
+                                                label = { Text(label) },
+                                                colors = navItemColors
+                                            )
+                                        }
                                     }
                                 }
                             ) { innerPadding ->

@@ -108,41 +108,41 @@ fun DashboardScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = Spacing.md, vertical = Spacing.sm),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
                 Text(
                     text = "FinTrace Ticker",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
                     text = "Real-time assets monitoring",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            
-            // Highly professional asset manager button
+
+            // Asset manager action — minimum 48dp touch target for accessibility
             Button(
                 onClick = { showManageAssetsDialog = true },
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(Radius.md),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                modifier = Modifier.height(36.dp)
+                contentPadding = PaddingValues(horizontal = Spacing.md, vertical = Spacing.sm),
+                modifier = Modifier.heightIn(min = MinTouchTarget)
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
-                    contentDescription = "Manage Assets",
-                    modifier = Modifier.size(16.dp)
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
                 )
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(Spacing.xs))
                 Text(
                     text = "Manage",
                     style = MaterialTheme.typography.labelLarge,
@@ -163,36 +163,48 @@ fun DashboardScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(24.dp),
+                    .padding(Spacing.lg),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.AddChart,
-                        contentDescription = null,
-                        modifier = Modifier.size(72.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(RoundedCornerShape(Radius.xl))
+                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AddChart,
+                            contentDescription = null,
+                            modifier = Modifier.size(44.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(Spacing.lg))
                     Text(
-                        text = "No Active Symbols",
+                        text = "No active symbols yet",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(Spacing.sm))
                     Text(
-                        text = "Go to Settings or tap the [+] button in the status bar to active your portfolio assets for real-time monitoring.",
+                        text = "Add assets to your portfolio to start tracking live prices and trigger alerts.",
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = Spacing.md)
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(Spacing.lg))
                     Button(
                         onClick = { showManageAssetsDialog = true },
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(Radius.md),
+                        modifier = Modifier.heightIn(min = MinTouchTarget)
                     ) {
-                        Text("Add Assets Now")
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(Spacing.xs))
+                        Text("Add your first asset")
                     }
                 }
             }
