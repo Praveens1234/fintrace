@@ -363,14 +363,16 @@ fun ConnectionStatusBar(
                 fontSize = 11.sp
             )
             
-            val pingColor = if (latency < 300) ConnectionLive else ConnectionReconnecting
-            Text(
-                text = "Ping: ${latency}ms",
-                style = MaterialTheme.typography.labelMedium,
-                color = pingColor,
-                fontWeight = FontWeight.Medium,
-                fontSize = 11.sp
-            )
+            if (status == "LIVE") {
+                val pingColor = if (latency < 300) ConnectionLive else ConnectionReconnecting
+                Text(
+                    text = "Ping: ${latency}ms",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = pingColor,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 11.sp
+                )
+            }
         }
     }
 }
@@ -637,6 +639,7 @@ fun PriceMetricCard(
 
     // Calm, static accents (no distracting 1Hz pulse; also avoids a continuous animation).
     val cardBorder = when {
+        isClosed -> BorderStroke(1.dp, NeutralPrice.copy(alpha = 0.4f))
         isOffline -> BorderStroke(1.dp, ConnectionOffline.copy(alpha = 0.55f))
         isAlerted -> BorderStroke(1.5.dp, alertStyleColor.copy(alpha = 0.5f))
         else -> null
@@ -721,6 +724,7 @@ fun PriceMetricCard(
                         .clip(RoundedCornerShape(6.dp))
                         .background(
                             when {
+                                isClosed -> NeutralPrice.copy(alpha = 0.12f)
                                 isOffline -> ConnectionOffline.copy(alpha = 0.12f)
                                 isStale -> AlertActive.copy(alpha = 0.12f)
                                 isAlerted -> alertStyleColor.copy(alpha = 0.15f)
@@ -739,6 +743,7 @@ fun PriceMetricCard(
                                 .clip(RoundedCornerShape(2.5.dp))
                                 .background(
                                     when {
+                                        isClosed -> NeutralPrice
                                         isOffline -> ConnectionOffline
                                         isStale -> AlertActive
                                         isAlerted -> alertStyleColor
@@ -756,6 +761,7 @@ fun PriceMetricCard(
                             },
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
                             color = when {
+                                isClosed -> NeutralPrice
                                 isOffline -> ConnectionOffline
                                 isStale -> AlertActive
                                 isAlerted -> alertStyleColor
@@ -1171,6 +1177,7 @@ fun PriceMetricClassicRow(
                 
                 // State indication dot matching specs
                 val dotColor = when {
+                    isClosed -> NeutralPrice
                     isOffline -> ConnectionOffline
                     isStale -> AlertActive
                     isAlerted -> alertStyleColor
