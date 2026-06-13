@@ -2,6 +2,7 @@ package com.example
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -47,6 +48,24 @@ class MainActivity : ComponentActivity() {
                         val completedSetting = monitor.getSetting("setup_completed")
                         currentRoute = if (completedSetting == "true") "home" else "wizard"
                     }
+                }
+
+                // ── System back handling ──────────────────────────────────────────
+                // Navigation is driven by manual state, so the system Back gesture/key must be
+                // intercepted; otherwise it propagates to the OS and exits the app. Each handler
+                // is only enabled for the routes it applies to (the most specific wins because
+                // Compose dispatches Back to the last-registered enabled handler).
+                BackHandler(enabled = currentRoute == "detail") {
+                    currentRoute = "home" // return to the Prices tab the user came from
+                }
+                BackHandler(enabled = currentRoute == "about_app" || currentRoute == "about_dev" || currentRoute == "permissions") {
+                    currentRoute = "home"
+                    currentTab = "settings"
+                }
+                // On the home shell, Back from any non-Prices tab returns to Prices (the home tab);
+                // Back from Prices itself falls through to the OS (exit), the expected Android behavior.
+                BackHandler(enabled = currentRoute == "home" && currentTab != "prices") {
+                    currentTab = "prices"
                 }
 
                 Surface(
