@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.example.data.repository.PriceMonitorManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -67,16 +68,34 @@ class PriceTrackerService : Service() {
             Log.e("PriceTrackerService", "Failed to initialize screen state: ${e.message}")
         }
 
-        // Register dynamic receiver for physical key silencing gestures and screen state alterations
+        // Register dynamic receiver for physical key silencing gestures and screen state alterations.
+        // ContextCompat applies RECEIVER_NOT_EXPORTED on Android 14+ (targetSdk 36), which is
+        // mandatory there — a flagless registerReceiver() throws SecurityException and crashes.
         try {
             val filter = android.content.IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_SCREEN_ON)
                 addAction("android.media.VOLUME_CHANGED_ACTION")
             }
-            registerReceiver(screenOffReceiver, filter)
+            ContextCompat.registerReceiver(
+                this,
+                screenOffReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
         } catch (e: Exception) {
             Log.e("PriceTrackerService", "Failed to register screenReceiver: ${e.message}")
+        }
+
+        // Keep the foreground-service notification's monitored-symbol summary in sync.
+        // Launched once here (NOT in onStartCommand, which can run repeatedly and would
+        // otherwise leak a new collector on every service restart).
+        scope.launch {
+            monitorManager.activeSymbols.collect { active ->
+                val fgsNotif = NotificationHelper.buildFgsNotification(this@PriceTrackerService, active)
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                nm.notify(NotificationHelper.FGS_NOTIFICATION_ID, fgsNotif)
+            }
         }
 
         Log.d("PriceTrackerService", "Foreground service created successfully")
@@ -94,14 +113,6 @@ class PriceTrackerService : Service() {
             )
         } else {
             startForeground(NotificationHelper.FGS_NOTIFICATION_ID, notification)
-        }
-
-        scope.launch {
-            monitorManager.activeSymbols.collect { active ->
-                val fgsNotif = NotificationHelper.buildFgsNotification(this@PriceTrackerService, active)
-                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-                nm.notify(NotificationHelper.FGS_NOTIFICATION_ID, fgsNotif)
-            }
         }
 
         monitorManager.startMonitoringLoop()

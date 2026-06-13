@@ -32,8 +32,6 @@ import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.asCoroutineDispatcher
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.ConcurrentHashMap
@@ -66,8 +64,6 @@ class PriceMonitorManager private constructor(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var connectionJob: Job? = null
     private var simTickJob: Job? = null
-    private val incomingQueue = java.util.concurrent.ConcurrentHashMap<String, Double>()
-    private var reconciliationJob: Job? = null
     private var logCounter = 0
     private var reconnectCount = 0
 
@@ -169,7 +165,7 @@ class PriceMonitorManager private constructor(context: Context) {
                                 db.appLogDao().insertLog(com.example.data.model.AppLog(
                                     type = "PROTECTION",
                                     symbol = null,
-                                    message = "DATABASE STORAGE LIMIT MITIGATION: 10MB storage limit hit (${String.format("%.2f", info.usedMB)} MB). Auto-purged oldest 70% of logs to protect system storage. Retained last $keepCount logs and vacuumed."
+                                    message = "DATABASE STORAGE LIMIT MITIGATION: 10MB storage limit hit (${String.format(Locale.US, "%.2f", info.usedMB)} MB). Auto-purged oldest 70% of logs to protect system storage. Retained last $keepCount logs and vacuumed."
                                 ))
                             }
                         }
@@ -209,7 +205,6 @@ class PriceMonitorManager private constructor(context: Context) {
         .build()
 
     init {
-        startReconciliationLoop()
         isolatePool.setupWorkers(4)
         // Initialize Default Symbols and load current selection
         scope.launch(Dispatchers.IO) {
@@ -227,7 +222,13 @@ class PriceMonitorManager private constructor(context: Context) {
             }
 
             setupInitialSymbolsIfNeeded()
-            loadActiveSymbols()
+
+            // NOTE: loadActiveSymbols() and observeLiveTickerSymbolsSetting() collect Room Flows
+            // that never complete, so they MUST run in their own child coroutines. Calling them
+            // inline would suspend this init coroutine forever and silently skip every statement
+            // below (settings load, alert observer, monitoring start).
+            launch { loadActiveSymbols() }
+
             isTickLoggingEnabled = (getSetting("tick_logging_enabled") ?: "true") == "true"
             isNativeModeEnabled = (getSetting("websocket_use_native_mode") ?: "true") == "true"
             cachedPriceUpdateIntervalMs = getUiPriceIntervalSettingFromDb()
@@ -238,14 +239,13 @@ class PriceMonitorManager private constructor(context: Context) {
                     val activeList = list.filter { it.isActive }
                     activeAlertsCache = activeList
                     hasActiveAlerts = activeList.isNotEmpty()
-                 _hasActiveAlertsFlow.value = hasActiveAlerts
-  
+                    _hasActiveAlertsFlow.value = hasActiveAlerts
                 }
             }
             // Load and apply decimal precision setting
             val precisionRaw = getSetting("price_precision_override") ?: "MAX"
             com.example.data.model.PricePrecisionConfig.maxPrecision = precisionRaw.toIntOrNull()
-            
+
             // Load per-asset custom overrides
             SymbolInfo.ALL.forEach { s ->
                 val key = "price_precision_override_${s.symbol.uppercase()}"
@@ -253,14 +253,14 @@ class PriceMonitorManager private constructor(context: Context) {
                 val overrideInt = overrideRaw?.toIntOrNull()
                 com.example.data.model.PricePrecisionConfig.setOverride(s.symbol, overrideInt)
             }
-            
+
             initializePriceCache()
-            
-            // Start observing live ticker symbols config
+
+            // Start observing live ticker symbols config (collects a Flow forever -> own coroutine)
             launch {
                 observeLiveTickerSymbolsSetting()
             }
-            
+
             startMonitoringLoop()
         }
     }
@@ -404,7 +404,6 @@ class PriceMonitorManager private constructor(context: Context) {
     fun stopMonitoring() {
         connectionJob?.cancel()
         simTickJob?.cancel()
-        reconciliationJob?.cancel()
         activeWebSocket?.close(1000, "App closed")
         activeWebSocket = null
 
@@ -579,7 +578,7 @@ class PriceMonitorManager private constructor(context: Context) {
             val netChange = newPrice - openPrice
             val netChangePct = if (openPrice > 0.0) (netChange / openPrice) * 100 else 0.0
             val changeStr = if (netChange >= 0) "+${netChange.formatPriceDynamic(displayDecs)}" else netChange.formatPriceDynamic(displayDecs)
-            val pctStr = if (netChangePct >= 0) "+${String.format("%.2f", netChangePct)}%" else "${String.format("%.2f", netChangePct)}%"
+            val pctStr = if (netChangePct >= 0) "+${String.format(Locale.US, "%.2f", netChangePct)}%" else "${String.format(Locale.US, "%.2f", netChangePct)}%"
             val formattedPrice = newPrice.formatPriceDynamic(displayDecs)
             
             // Log with the dedicated Thread name to show visual evidence that each asset runs on its own background thread!
@@ -716,195 +715,9 @@ class PriceMonitorManager private constructor(context: Context) {
         }
     }
 
-    private fun handleWsMessage(text: String) {
-        try {
-            val json = JSONObject(text)
-            val event = json.optString("event")
-            val status = json.optString("status")
-            val message = json.optString("message")
-
-            if (event == "error" || status == "error" || (json.has("code") && json.optInt("code") >= 400)) {
-                val errMsg = "TWELVE DATA ERROR: ${if (message.isNullOrBlank()) "Server response error: $text" else message}"
-                logEvent("ERROR", null, errMsg)
-                Log.e("PriceMonitor", errMsg)
-            }
-
-            if (event == "price") {
-                val sym = json.optString("symbol")
-                val priceVal = json.optDouble("price")
-                if (!sym.isNullOrBlank() && !priceVal.isNaN()) {
-                    incomingQueue[sym] = priceVal
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("PriceMonitor", "WS Error: ${e.message}")
-        }
-    }
-
-    private suspend fun awaitFrame(): Long = kotlin.coroutines.suspendCoroutine { continuation ->
-        try {
-            android.view.Choreographer.getInstance().postFrameCallback { frameTimeNanos ->
-                continuation.resume(frameTimeNanos)
-            }
-        } catch (e: Exception) {
-            // Fallback for non-main thread or non-looper (e.g., unit test environments)
-            scope.launch(Dispatchers.Main) {
-                try {
-                    android.view.Choreographer.getInstance().postFrameCallback { frameTimeNanos ->
-                        continuation.resume(frameTimeNanos)
-                    }
-                } catch (ex: Exception) {
-                    delay(16)
-                    continuation.resume(System.nanoTime())
-                }
-            }
-        }
-    }
-
-    private fun startReconciliationLoop() {
-        reconciliationJob?.cancel()
-        reconciliationJob = scope.launch(Dispatchers.Default) {
-            while (true) {
-                delay(16)
-                if (incomingQueue.isNotEmpty()) {
-                    val ticksToProcess = mutableMapOf<String, Double>()
-                    val keys = incomingQueue.keys()
-                    while (keys.hasMoreElements()) {
-                        val key = keys.nextElement()
-                        val value = incomingQueue.remove(key)
-                        if (value != null) {
-                            ticksToProcess[key] = value
-                        }
-                    }
-                    if (ticksToProcess.isNotEmpty()) {
-                        processBatchedPrices(ticksToProcess)
-                    }
-                }
-            }
-        }
-    }
-
-    private suspend fun processBatchedPrices(ticksToProcess: Map<String, Double>) {
-        try {
-            val isNative = getWebsocketUseNativeMode()
-            val now = System.currentTimeMillis()
-            val interval = getUiPriceIntervalSetting()
-
-            val filteredTicks = if (isNative) {
-                ticksToProcess
-            } else {
-                ticksToProcess.filter { (sym, _) ->
-                    val lastUpdateTime = lastSymbolUpdateTimes[sym] ?: 0L
-                    if (now - lastUpdateTime >= interval) {
-                        lastSymbolUpdateTimes[sym] = now
-                        true
-                    } else {
-                        false
-                    }
-                }
-            }
-
-            if (filteredTicks.isEmpty()) return
-
-            // Ensure our price state cache has initial entries so that we have historical fields populated
-            if (_priceState.value.isEmpty()) {
-                _priceState.update { currentMap ->
-                    if (currentMap.isEmpty()) {
-                        val initialMap = mutableMapOf<String, PriceTick>()
-                        SymbolInfo.ALL.forEach { s ->
-                            initialMap[s.symbol] = PriceTick(
-                                symbol = s.symbol,
-                                price = s.defaultPrice,
-                                bid = s.defaultPrice - (0.0004 * s.defaultPrice),
-                                ask = s.defaultPrice + (0.0004 * s.defaultPrice),
-                                history = listOf(s.defaultPrice),
-                                openPrice = s.defaultPrice
-                            )
-                        }
-                        initialMap
-                    } else {
-                        currentMap
-                    }
-                }
-            }
-
-            // Launch parallel isolated processing per filtered asset in our worker pool
-            filteredTicks.forEach { (sym, newPrice) ->
-                val dispatcher = getDispatcherForAsset(sym)
-                scope.launch(dispatcher) {
-                    processSinglePriceUpdate(sym, newPrice, now)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("PriceMonitor", "Failed to process batched live prices: ${e.message}", e)
-        }
-    }
-
-    private suspend fun processSinglePriceUpdate(sym: String, newPrice: Double, now: Long) {
-        try {
-            lastSymbolUpdateTimes[sym] = now
-            val info = SymbolInfo.find(sym)
-            
-            var prevPrice = info.defaultPrice
-            var openPrice = newPrice
-
-            // Perform transactional atomic calculations to ensure multi-threaded sync safety
-            _priceState.update { currentMap ->
-                val currentTick = currentMap[sym] ?: PriceTick(sym, info.defaultPrice)
-                prevPrice = currentTick.price
-                openPrice = if (currentTick.price == info.defaultPrice) newPrice else (currentTick.openPrice ?: newPrice)
-
-                val netChange = newPrice - openPrice
-                val netChangePct = if (openPrice > 0.0) (netChange / openPrice) * 100 else 0.0
-
-                val spreadFactor = when (info.category) {
-                    "Metals" -> 0.0002
-                    "Majors" -> 0.0001
-                    else -> 0.00015
-                }
-                val spreadVal = newPrice * spreadFactor
-                val bid = newPrice - (spreadVal / 2)
-                val ask = newPrice + (spreadVal / 2)
-
-                val oldHistory = currentTick.history
-                val newHistory = (oldHistory + newPrice).takeLast(20)
-
-                val updatedTick = PriceTick(
-                    symbol = sym,
-                    price = newPrice,
-                    change = netChange,
-                    changePercent = netChangePct,
-                    bid = bid,
-                    ask = ask,
-                    history = newHistory,
-                    openPrice = openPrice
-                )
-
-                val newMap = currentMap.toMutableMap()
-                newMap[sym] = updatedTick
-                newMap
-            }
-
-            // Dedicated asset worker thread evaluates threshold checklist/alerts
-            evaluateAlerts(sym, prevPrice, newPrice)
-
-            val displayDecs = info.getDisplayDecimals()
-            val netChange = newPrice - openPrice
-            val netChangePct = if (openPrice > 0.0) (netChange / openPrice) * 100 else 0.0
-            val changeStr = if (netChange >= 0) "+${netChange.formatPriceDynamic(displayDecs)}" else netChange.formatPriceDynamic(displayDecs)
-            val pctStr = if (netChangePct >= 0) "+${String.format("%.2f", netChangePct)}%" else "${String.format("%.2f", netChangePct)}%"
-            val formattedPrice = newPrice.formatPriceDynamic(displayDecs)
-            
-            // Log with the dedicated Thread name to show visual evidence that each asset runs on its own background thread!
-            logEvent("TICK", sym, "[${Thread.currentThread().name}] $sym live at $formattedPrice ($changeStr | $pctStr)")
-
-            scheduleSystemUpdates()
-        } catch (e: Exception) {
-            Log.e("PriceMonitor", "Error processing live price update in worker thread for $sym: ${e.message}", e)
-        }
-    }
-
     private val systemSyncPending = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    @Volatile
     private var lastSystemSyncTime = 0L
 
     fun scheduleSystemUpdates() {
@@ -1131,8 +944,13 @@ class PriceMonitorManager private constructor(context: Context) {
         val workers = mutableListOf<IsolateWorker>()
 
         fun setupWorkers(count: Int) {
-            shutdown()
             synchronized(workers) {
+                // Idempotent: workers run until shutdown(). Re-creating them on every
+                // startMonitoringLoop() (screen toggle / setting change) caused needless
+                // thread churn, so skip if the pool is already populated.
+                if (workers.size == count) return
+                workers.forEach { it.stop() }
+                workers.clear()
                 for (i in 0 until count) {
                     val worker = IsolateWorker(i)
                     worker.start()
@@ -1241,7 +1059,7 @@ class PriceMonitorManager private constructor(context: Context) {
             val netChange = newPrice - openPrice
             val netChangePct = if (openPrice > 0.0) (netChange / openPrice) * 100 else 0.0
             val changeStr = if (netChange >= 0) "+${netChange.formatPriceDynamic(displayDecs)}" else netChange.formatPriceDynamic(displayDecs)
-            val pctStr = if (netChangePct >= 0) "+${String.format("%.2f", netChangePct)}%" else "${String.format("%.2f", netChangePct)}%"
+            val pctStr = if (netChangePct >= 0) "+${String.format(Locale.US, "%.2f", netChangePct)}%" else "${String.format(Locale.US, "%.2f", netChangePct)}%"
             val formattedPrice = newPrice.formatPriceDynamic(displayDecs)
             
             // Log with the dedicated Isolate Thread identifier to show visual evidence that each packet runs on its own isolate!

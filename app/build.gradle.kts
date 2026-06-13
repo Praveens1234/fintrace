@@ -21,18 +21,18 @@ android {
   }
 
   signingConfigs {
+    // Release signing is driven entirely by CI/CD environment variables. When they are absent
+    // (local dev, PR builds) the release variant simply can't be signed, which is fine because
+    // those flows build the debug variant. Debug uses AGP's auto-generated ~/.android/debug.keystore
+    // so the project builds from a clean clone with no committed keystore.
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
-    }
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
+      val keystorePath = System.getenv("KEYSTORE_PATH")
+      if (keystorePath != null) {
+        storeFile = file(keystorePath)
+        storePassword = System.getenv("STORE_PASSWORD")
+        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
+        keyPassword = System.getenv("KEY_PASSWORD")
+      }
     }
   }
 
@@ -41,10 +41,10 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
-    }
-    debug {
-      signingConfig = signingConfigs.getByName("debugConfig")
+      // Only attach the release signing config when CI supplied a keystore.
+      if (System.getenv("KEYSTORE_PATH") != null) {
+        signingConfig = signingConfigs.getByName("release")
+      }
     }
   }
   compileOptions {
