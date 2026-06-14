@@ -4,33 +4,71 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    
-    <!-- Central Pulse Ring -->
-    <path
-        android:fillColor="#1569F0AE"
-        android:pathData="M54,54m-28,0a28,28 0,1 1,56 0a28,28 0,1 1,-56 0" />
-        
-    <!-- Sleek Financial Growth Trend Curve -->
-    <path
-        android:strokeColor="#69F0AE"
-        android:strokeWidth="5"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M24,72 L42,52 L58,60 L84,32" />
 
-    <!-- Sharp arrowhead at peak -->
-    <path
-        android:fillColor="#69F0AE"
-        android:pathData="M84,32 L74,34 L82,42 Z" />
-
-    <!-- Target Alert crossing node (Intersection) -->
-    <path
-        android:fillColor="#7C4DFF"
-        android:pathData="M58,60m-6,0a6,6 0,1 1,12 0a6,6 0,1 1,-12 0" />
-        
-    <!-- Pure central core of the active trigger node -->
+    <!-- Rising bar chart — 3 bars ascending left to right -->
+    <!-- Bar 1 (left, short) -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M58,60m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
-        
+        android:pathData="M28,72 L34,72 L34,58 L28,58 Z" />
+    <!-- Bar 2 (middle, medium) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M41,72 L47,72 L47,48 L41,48 Z" />
+    <!-- Bar 3 (right, tall) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,72 L60,72 L60,36 L54,36 Z" />
+
+    <!-- Trend line connecting bar tops -->
+    <path
+        android:strokeColor="#69F0AE"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M31,58 L44,48 L57,36 L72,24" />
+
+    <!-- Arrow tip at trend line end -->
+    <path
+        android:fillColor="#69F0AE"
+        android:pathData="M72,24 L65,26 L69,32 Z" />
+
+    <!-- Upward arrow accent (small, bottom-right area) -->
+    <path
+        android:strokeColor="#69F0AE"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M76,64 L76,56" />
+    <path
+        android:fillColor="#69F0AE"
+        android:pathData="M76,56 L72,61 L80,61 Z" />
+
+    <!-- "FT" text mark — bottom left -->
+    <!-- F: vertical stroke + two horizontal strokes -->
+    <path
+        android:strokeColor="#69F0AE"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M23,80 L23,90" />
+    <path
+        android:strokeColor="#69F0AE"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M23,80 L29,80" />
+    <path
+        android:strokeColor="#69F0AE"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M23,85 L28,85" />
+    <!-- T: horizontal top stroke + vertical stroke -->
+    <path
+        android:strokeColor="#69F0AE"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M32,80 L40,80" />
+    <path
+        android:strokeColor="#69F0AE"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M36,80 L36,90" />
+
 </vector>

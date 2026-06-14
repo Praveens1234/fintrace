@@ -38,6 +38,8 @@ import com.example.ui.theme.ConnectionLive
 import com.example.ui.theme.Radius
 import com.example.ui.theme.Spacing
 import com.example.viewmodel.MainViewModel
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -134,6 +136,8 @@ fun SettingsScreen(
     val ttsLanguage by viewModel.ttsLanguage.collectAsState()
     val updateInterval by viewModel.priceUpdateIntervalMs.collectAsState()
     val websocketUseNativeMode by viewModel.websocketUseNativeMode.collectAsState()
+    val providerConnectionMode by viewModel.providerConnectionMode.collectAsState()
+    val restPollingIntervalMs by viewModel.restPollingIntervalMs.collectAsState()
     val cardStyle by viewModel.dashboardCardStyle.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
     val hapticEnabled by viewModel.hapticFeedbackEnabled.collectAsState()
@@ -225,6 +229,7 @@ fun SettingsScreen(
         }
     )
 
+    var restIntervalInput by remember(restPollingIntervalMs) { mutableStateOf(restPollingIntervalMs.toString()) }
     var showSoundSourceDialog by remember { mutableStateOf(false) }
     var billingExpanded by remember { mutableStateOf(false) }
     var tradingExpanded by remember { mutableStateOf(false) }
@@ -463,6 +468,54 @@ fun SettingsScreen(
                         }
                     }
 
+                    // Only show connection mode toggle if provider supports both WS and REST
+                    if (selectedProvider.supportsRest && selectedProvider.supportsWebSocket) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        SectionLabel("CONNECTION MODE")
+
+                        val connModeOptions = listOf("WebSocket", "REST Polling")
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            connModeOptions.forEachIndexed { index, option ->
+                                val isWs = option == "WebSocket"
+                                SegmentedButton(
+                                    selected = if (isWs) providerConnectionMode == "WEBSOCKET" else providerConnectionMode == "REST",
+                                    onClick = { viewModel.saveProviderConnectionMode(if (isWs) "WEBSOCKET" else "REST") },
+                                    shape = SegmentedButtonDefaults.itemShape(index, connModeOptions.size)
+                                ) {
+                                    Text(option, style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                        }
+
+                        if (providerConnectionMode == "REST") {
+                            Spacer(modifier = Modifier.height(Spacing.sm))
+                            SettingRow(
+                                title = "REST Polling Interval",
+                                subtitle = "How often to query the REST API (500–60,000 ms)"
+                            ) {
+                                OutlinedTextField(
+                                    value = restIntervalInput,
+                                    onValueChange = { input ->
+                                        restIntervalInput = input
+                                        input.toLongOrNull()?.let { viewModel.saveRestPollingIntervalMs(it) }
+                                    },
+                                    suffix = { Text("ms") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.width(120.dp)
+                                )
+                            }
+                        }
+                    } else if (!selectedProvider.supportsRest) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Text(
+                            "WebSocket only — ${selectedProvider.displayName} does not offer a public REST API.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    // else: REST-only provider (Alpha Vantage, OANDA) — already handled by existing UI
+
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                     SectionLabel("STREAM SYNC MODE")
@@ -476,7 +529,7 @@ fun SettingsScreen(
                                 onClick = { viewModel.saveWebsocketUseNativeMode(isNative) },
                                 shape = SegmentedButtonDefaults.itemShape(index, streamOptions.size),
                                 modifier = Modifier.testTag(if (isNative) "tick_mode_native_button" else "tick_mode_interval_button"),
-                                enabled = selectedProvider.supportsWebSocket
+                                enabled = selectedProvider.supportsWebSocket && providerConnectionMode == "WEBSOCKET"
                             ) {
                                 Text(option, style = MaterialTheme.typography.labelMedium)
                             }
@@ -486,6 +539,12 @@ fun SettingsScreen(
                     if (!selectedProvider.supportsWebSocket) {
                         Text(
                             "Stream sync mode is not applicable for REST polling providers.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    } else if (providerConnectionMode == "REST") {
+                        Text(
+                            "Stream sync mode is not applicable in REST polling mode.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
@@ -506,20 +565,22 @@ fun SettingsScreen(
                         }
                     }
 
+                    val wsAndNativeEnabled = selectedProvider.supportsWebSocket && providerConnectionMode == "WEBSOCKET" && !websocketUseNativeMode
                     SettingRow(
                         title = "Price Update Interval",
                         subtitle = if (!selectedProvider.supportsWebSocket) "N/A — REST polling uses fixed 13 s cadence"
+                                   else if (providerConnectionMode == "REST") "N/A — using REST polling mode"
                                    else if (websocketUseNativeMode) "Disable Native Mode to configure"
                                    else "Throttle latency: 100 ms – 10 s",
-                        enabled = selectedProvider.supportsWebSocket && !websocketUseNativeMode
+                        enabled = wsAndNativeEnabled
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.alpha(if (selectedProvider.supportsWebSocket && !websocketUseNativeMode) 1f else 0.38f)
+                            modifier = Modifier.alpha(if (wsAndNativeEnabled) 1f else 0.38f)
                         ) {
                             IconButton(
                                 onClick = { viewModel.savePriceUpdateInterval(updateInterval - 50) },
-                                enabled = selectedProvider.supportsWebSocket && !websocketUseNativeMode
+                                enabled = wsAndNativeEnabled
                             ) {
                                 Icon(Icons.Default.RemoveCircleOutline, null, modifier = Modifier.size(20.dp))
                             }
@@ -527,7 +588,7 @@ fun SettingsScreen(
                                 modifier = Modifier.widthIn(min = 64.dp), textAlign = TextAlign.Center)
                             IconButton(
                                 onClick = { viewModel.savePriceUpdateInterval(updateInterval + 50) },
-                                enabled = selectedProvider.supportsWebSocket && !websocketUseNativeMode
+                                enabled = wsAndNativeEnabled
                             ) {
                                 Icon(Icons.Default.AddCircleOutline, null, modifier = Modifier.size(20.dp))
                             }

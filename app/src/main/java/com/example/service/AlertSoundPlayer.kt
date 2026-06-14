@@ -23,14 +23,24 @@ object AlertSoundPlayer {
     @Volatile private var ttsLocale: Locale = Locale.US
     private val handler = Handler(Looper.getMainLooper())
     private var stopRunnable: Runnable? = null
+    @Volatile private var pendingTtsSpeech: String? = null
+    @Volatile private var pendingTtsUtteranceId: String? = null
 
     fun initTts(context: Context) {
         if (tts == null) {
             tts = TextToSpeech(context.applicationContext) { status ->
                 if (status == TextToSpeech.SUCCESS) {
                     applyTtsLocale()
+                    // Drain any speech that was queued before init completed
+                    pendingTtsSpeech?.let { text ->
+                        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, pendingTtsUtteranceId ?: "TTS")
+                        pendingTtsSpeech = null
+                        pendingTtsUtteranceId = null
+                    }
                 } else {
                     Log.e("AlertSoundPlayer", "TTS Initialization failed")
+                    pendingTtsSpeech = null
+                    pendingTtsUtteranceId = null
                 }
             }
         }
@@ -93,16 +103,12 @@ object AlertSoundPlayer {
                     withContext(Dispatchers.Main) {
                         // Play TTS voice
                         if (soundMode == "Both Tone and Voice" || soundMode == "TTS voice only") {
-                            initTts(context)
                             if (isTtsReady) {
                                 tts?.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "ALERT_TTS")
                             } else {
-                                tts = TextToSpeech(context.applicationContext) { status ->
-                                    if (status == TextToSpeech.SUCCESS) {
-                                        applyTtsLocale()
-                                        tts?.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "ALERT_TTS")
-                                    }
-                                }
+                                pendingTtsSpeech = textToSpeak
+                                pendingTtsUtteranceId = "ALERT_TTS"
+                                initTts(context)
                             }
                         }
 
@@ -157,16 +163,12 @@ object AlertSoundPlayer {
                 val playTone = mode == "Both" || mode == "Tone"
 
                 if (playTts) {
-                    initTts(context)
                     if (isTtsReady) {
                         tts?.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "TRADE_TTS")
                     } else {
-                        tts = TextToSpeech(context.applicationContext) { status ->
-                            if (status == TextToSpeech.SUCCESS) {
-                                applyTtsLocale()
-                                tts?.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "TRADE_TTS")
-                            }
-                        }
+                        pendingTtsSpeech = textToSpeak
+                        pendingTtsUtteranceId = "TRADE_TTS"
+                        initTts(context)
                     }
                 }
 
@@ -174,9 +176,15 @@ object AlertSoundPlayer {
                     val monitor = PriceMonitorManager.getInstance(context)
                     val scope = CoroutineScope(Dispatchers.IO)
                     scope.launch {
-                        val soundUriStr = monitor.getSetting("alert_sound_uri") ?: ""
-                        val durationSec = monitor.getSetting("alert_ring_duration_sec")?.toIntOrNull() ?: 3
+                        val soundUriStr = monitor.getSetting("trade_alert_sound_uri")?.takeIf { it.isNotEmpty() }
+                            ?: (monitor.getSetting("alert_sound_uri") ?: "")
+                        val durationSec = monitor.getSetting("trade_alert_ring_duration_sec")?.toIntOrNull()
+                            ?: monitor.getSetting("alert_ring_duration_sec")?.toIntOrNull() ?: 5
+                        val tradeLang = monitor.getSetting("trade_alert_tts_language")?.takeIf { it.isNotEmpty() }
+                            ?: (monitor.getSetting("alert_tts_language") ?: "en-US")
                         withContext(Dispatchers.Main) {
+                            ttsLocale = parseLocale(tradeLang)
+                            if (isTtsReady) applyTtsLocale()
                             val uri = if (soundUriStr.isNotEmpty()) Uri.parse(soundUriStr)
                                 else RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
                             if (uri != null) {

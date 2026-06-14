@@ -151,6 +151,8 @@ data class SymbolInfo(
         val ALL = listOf(
             SymbolInfo("XAU/USD", "Gold Spot", "Metals", 2, 2318.45),
             SymbolInfo("XAG/USD", "Silver Spot", "Metals", 3, 27.82),
+            SymbolInfo("BTC/USD", "Bitcoin", "Crypto", 2, 95000.0),
+            SymbolInfo("ETH/USD", "Ethereum", "Crypto", 2, 3500.0),
             SymbolInfo("EUR/USD", "Euro / US Dollar", "Majors", 5, 1.0823),
             SymbolInfo("GBP/USD", "British Pound / US Dollar", "Majors", 5, 1.2741),
             SymbolInfo("USD/JPY", "US Dollar / Japanese Yen", "Majors", 3, 156.34),

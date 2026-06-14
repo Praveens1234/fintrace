@@ -115,6 +115,9 @@ class PriceMonitorManager private constructor(context: Context) {
     private var oandaStreamJob: Job? = null
 
     @Volatile
+    private var restPollingJob: Job? = null
+
+    @Volatile
     private var cachedTtsLanguage = "en-US"
 
     fun getTtsLanguage(): String = cachedTtsLanguage
@@ -506,8 +509,15 @@ class PriceMonitorManager private constructor(context: Context) {
                         }
                     }
                     else -> {
-                        if (activeWebSocket == null || _connectionStatus.value == "CLOSED" || _connectionStatus.value == "OFFLINE") {
-                            connectToProvider(apiKey, provider)
+                        val connMode = getSetting("provider_connection_mode") ?: "WEBSOCKET"
+                        if (connMode == "REST" && provider.supportsRest) {
+                            if (restPollingJob == null || restPollingJob?.isActive != true) {
+                                startRestPolling(apiKey, provider)
+                            }
+                        } else {
+                            if (activeWebSocket == null || _connectionStatus.value == "CLOSED" || _connectionStatus.value == "OFFLINE") {
+                                connectToProvider(apiKey, provider)
+                            }
                         }
                     }
                 }
@@ -528,6 +538,8 @@ class PriceMonitorManager private constructor(context: Context) {
         avPollingJob = null
         oandaStreamJob?.cancel()
         oandaStreamJob = null
+        restPollingJob?.cancel()
+        restPollingJob = null
     }
 
     private fun closeSocket(reason: String) = closeConnections(reason)
@@ -763,6 +775,11 @@ class PriceMonitorManager private constructor(context: Context) {
                 symbolIndex++
 
                 try {
+                    if (sym.uppercase().startsWith("BTC") || sym.uppercase().startsWith("ETH")) {
+                        logEvent("SYSTEM", sym, "Alpha Vantage crypto requires a separate endpoint. Skipping $sym.")
+                        delay(1_000L)
+                        continue
+                    }
                     val parts = sym.split("/")
                     val from = parts.getOrElse(0) { "" }
                     val to = parts.getOrElse(1) { "USD" }
@@ -802,11 +819,108 @@ class PriceMonitorManager private constructor(context: Context) {
         }
     }
 
-    private fun toFinnhubSymbol(appSymbol: String): String =
-        "OANDA:" + appSymbol.replace("/", "_")
+    private fun startRestPolling(apiKey: String, provider: PriceProvider) {
+        restPollingJob?.cancel()
+        restPollingJob = scope.launch(Dispatchers.IO) {
+            _connectionStatus.value = "CONNECTING"
+            logEvent("SYSTEM", null, "Starting ${provider.displayName} REST polling feed...")
+            _connectionStatus.value = "LIVE"
+            reconnectCount = 0
 
-    private fun fromFinnhubSymbol(finnhubSymbol: String): String =
-        finnhubSymbol.removePrefix("OANDA:").replace("_", "/")
+            var symbolIndex = 0
+            while (isActive && MarketSchedule.isOpenNow()) {
+                val intervalMs = getSetting("rest_polling_interval_ms")?.toLongOrNull() ?: 2000L
+                val symbols = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
+                if (symbols.isEmpty()) { delay(intervalMs); continue }
+
+                val sym = symbols[symbolIndex % symbols.size]
+                symbolIndex++
+
+                try {
+                    val price = fetchRestPrice(apiKey, provider, sym)
+                    if (price != null && price > 0) {
+                        processSinglePriceUpdateFromIsolate(-1, sym, price, System.currentTimeMillis())
+                    }
+                } catch (e: Exception) {
+                    logEvent("SYSTEM", sym, "${provider.displayName} REST poll error: ${e.message}")
+                }
+
+                delay(intervalMs)
+            }
+            _connectionStatus.value = "OFFLINE"
+        }
+    }
+
+    private suspend fun fetchRestPrice(apiKey: String, provider: PriceProvider, symbol: String): Double? {
+        val restClient = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .build()
+
+        return when (provider) {
+            PriceProvider.TWELVE_DATA -> {
+                val encodedSym = symbol.replace("/", "%2F")
+                val url = "https://api.twelvedata.com/price?symbol=$encodedSym&apikey=$apiKey"
+                val resp = restClient.newCall(Request.Builder().url(url).build()).execute()
+                val body = resp.body?.string() ?: return null
+                val json = JSONObject(body)
+                json.optString("price").toDoubleOrNull()
+            }
+            PriceProvider.FINNHUB -> {
+                val finnhubSym = toFinnhubSymbol(symbol)
+                val url = "https://finnhub.io/api/v1/quote?symbol=$finnhubSym&token=$apiKey"
+                val resp = restClient.newCall(Request.Builder().url(url).build()).execute()
+                val body = resp.body?.string() ?: return null
+                val json = JSONObject(body)
+                val price = json.optDouble("c", Double.NaN)
+                if (price.isNaN() || price == 0.0) null else price
+            }
+            PriceProvider.TRADERMADE -> {
+                val tmSym = toTraderMadeSymbol(symbol)
+                val urlSym = tmSym.replace(":QUOTE", "").replace("/", "")
+                val url = "https://marketdata.tradermade.com/api/v1/live?currency=$urlSym&api_key=$apiKey"
+                val resp = restClient.newCall(Request.Builder().url(url).build()).execute()
+                val body = resp.body?.string() ?: return null
+                val json = JSONObject(body)
+                val quotes = json.optJSONArray("quotes") ?: return null
+                if (quotes.length() == 0) return null
+                val quote = quotes.getJSONObject(0)
+                val mid = quote.optDouble("mid", Double.NaN)
+                if (mid.isNaN()) null else mid
+            }
+            PriceProvider.POLYGON -> {
+                if (symbol.startsWith("BTC") || symbol.startsWith("ETH")) {
+                    logEvent("SYSTEM", symbol, "Polygon forex REST does not support crypto. Skipping.")
+                    return null
+                }
+                val parts = symbol.split("/")
+                val from = parts.getOrElse(0) { "" }
+                val to = parts.getOrElse(1) { "USD" }
+                val url = "https://api.polygon.io/v2/snapshot/locale/global/markets/forex/tickers/C:${from}${to}?apiKey=$apiKey"
+                val resp = restClient.newCall(Request.Builder().url(url).build()).execute()
+                val body = resp.body?.string() ?: return null
+                val json = JSONObject(body)
+                val ticker = json.optJSONObject("ticker") ?: return null
+                val lastQuote = ticker.optJSONObject("lastQuote") ?: return null
+                val ask = lastQuote.optDouble("a", Double.NaN)
+                val bid = lastQuote.optDouble("b", Double.NaN)
+                if (ask.isNaN() || bid.isNaN()) null else (ask + bid) / 2.0
+            }
+            else -> null
+        }
+    }
+
+    private fun toFinnhubSymbol(appSymbol: String): String = when (appSymbol.uppercase()) {
+        "BTC/USD" -> "BINANCE:BTCUSDT"
+        "ETH/USD" -> "BINANCE:ETHUSDT"
+        else -> "OANDA:" + appSymbol.replace("/", "_")
+    }
+
+    private fun fromFinnhubSymbol(finnhubSymbol: String): String = when {
+        finnhubSymbol == "BINANCE:BTCUSDT" -> "BTC/USD"
+        finnhubSymbol == "BINANCE:ETHUSDT" -> "ETH/USD"
+        else -> finnhubSymbol.removePrefix("OANDA:").replace("_", "/")
+    }
 
     // ── TRADERMADE SOCKET INTEGRATION ─────────────────────────────────────
     // wss://stream.tradermade.com/feedAdv — login then subscribe; symbols as "EURUSD:QUOTE".
@@ -940,7 +1054,12 @@ class PriceMonitorManager private constructor(context: Context) {
                 .build()
 
             while (isActive && MarketSchedule.isOpenNow()) {
-                val instruments = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
+                val allSymbols = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
+                val cryptoSkipped = allSymbols.filter { it.uppercase().startsWith("BTC") || it.uppercase().startsWith("ETH") }
+                if (cryptoSkipped.isNotEmpty()) {
+                    logEvent("SYSTEM", null, "OANDA v20 does not support crypto assets.")
+                }
+                val instruments = allSymbols.filterNot { it.uppercase().startsWith("BTC") || it.uppercase().startsWith("ETH") }
                     .map { toOandaSymbol(it) }
                 if (instruments.isEmpty()) { delay(5_000L); continue }
                 val url = "https://$host/v3/accounts/$accountId/pricing/stream" +
@@ -1119,12 +1238,16 @@ class PriceMonitorManager private constructor(context: Context) {
     private fun toAllTickSymbol(appSymbol: String): String = when (appSymbol.uppercase()) {
         "XAU/USD" -> "GOLD"
         "XAG/USD" -> "Silver"
+        "BTC/USD" -> "BTCUSD"
+        "ETH/USD" -> "ETHUSD"
         else -> appSymbol.replace("/", "").uppercase()
     }
 
     private fun fromAllTickSymbol(code: String): String = when (code.uppercase()) {
         "GOLD" -> "XAU/USD"
         "SILVER" -> "XAG/USD"
+        "BTCUSD" -> "BTC/USD"
+        "ETHUSD" -> "ETH/USD"
         else -> if (code.length == 6) code.substring(0, 3).uppercase() + "/" + code.substring(3).uppercase() else code
     }
 
@@ -1217,10 +1340,17 @@ class PriceMonitorManager private constructor(context: Context) {
 
     private fun sendPolygonSubscribe(webSocket: WebSocket) {
         try {
-            // Polygon's forex cluster covers FX pairs only (metals are not on this feed).
+            // Polygon's forex cluster covers FX pairs only (metals and crypto are not on this feed).
             val all = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
-            val supported = all.filterNot { it.uppercase().startsWith("XAU") || it.uppercase().startsWith("XAG") }
-            val skipped = all - supported.toSet()
+            val cryptoSymbols = all.filter { it.uppercase().startsWith("BTC") || it.uppercase().startsWith("ETH") }
+            if (cryptoSymbols.isNotEmpty()) {
+                logEvent("SYSTEM", null, "Polygon forex cluster does not support crypto (BTC/ETH). Use a crypto-enabled provider.")
+            }
+            val supported = all.filterNot {
+                it.uppercase().startsWith("XAU") || it.uppercase().startsWith("XAG") ||
+                it.uppercase().startsWith("BTC") || it.uppercase().startsWith("ETH")
+            }
+            val skipped = all - supported.toSet() - cryptoSymbols.toSet()
             if (skipped.isNotEmpty()) {
                 logEvent("SYSTEM", null, "Polygon.io forex feed does not carry metals; skipping ${skipped.joinToString(", ")}.")
             }

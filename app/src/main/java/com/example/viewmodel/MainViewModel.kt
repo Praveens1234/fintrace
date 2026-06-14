@@ -176,6 +176,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _tradeAlertSoundMode = MutableStateFlow("Both") // Both | Tone | TTS | Silent
     val tradeAlertSoundMode: StateFlow<String> = _tradeAlertSoundMode.asStateFlow()
 
+    // Provider connection mode: "WEBSOCKET" or "REST"
+    private val _providerConnectionMode = MutableStateFlow("WEBSOCKET")
+    val providerConnectionMode: StateFlow<String> = _providerConnectionMode.asStateFlow()
+
+    // REST polling interval in ms (default 2000ms = 2 seconds)
+    private val _restPollingIntervalMs = MutableStateFlow(2000L)
+    val restPollingIntervalMs: StateFlow<Long> = _restPollingIntervalMs.asStateFlow()
+
     // ── VIRTUAL TRADING FLOWS ─────────────────────────────────────────────
     val openTrades: StateFlow<List<com.example.data.model.Trade>> =
         monitor.db.tradeDao().getOpenTradesFlow()
@@ -216,6 +224,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isEnvApiKeyActive.value = dbKey.isBlank() && !effectiveKey.isNullOrBlank()
             _priceUpdateIntervalMs.value = monitor.getUiPriceIntervalSetting()
             _websocketUseNativeMode.value = (monitor.getSetting("websocket_use_native_mode") ?: "true") == "true"
+            _providerConnectionMode.value = monitor.getSetting("provider_connection_mode") ?: "WEBSOCKET"
+            _restPollingIntervalMs.value = monitor.getSetting("rest_polling_interval_ms")?.toLongOrNull() ?: 2000L
             _dashboardCardStyle.value = monitor.getSetting("dashboard_card_style") ?: "Standard"
             _priceTextSize.value = monitor.getSetting("price_text_size")?.toFloatOrNull() ?: 0f
             _symbolIdTextSize.value = monitor.getSetting("symbol_id_text_size")?.toFloatOrNull() ?: 0f
@@ -433,6 +443,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _websocketUseNativeMode.value = enabled
             monitor.saveSetting("websocket_use_native_mode", enabled.toString())
             monitor.logEvent("SYSTEM", null, "Updated Native Tick Streaming mode: $enabled")
+        }
+    }
+
+    fun saveProviderConnectionMode(mode: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _providerConnectionMode.value = mode
+            monitor.saveSetting("provider_connection_mode", mode)
+            monitor.logEvent("SYSTEM", null, "Provider connection mode changed to: $mode")
+            monitor.startMonitoringLoop()
+        }
+    }
+
+    fun saveRestPollingIntervalMs(ms: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val validated = ms.coerceIn(500L, 60000L)
+            _restPollingIntervalMs.value = validated
+            monitor.saveSetting("rest_polling_interval_ms", validated.toString())
         }
     }
 

@@ -12,10 +12,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -55,6 +58,7 @@ private fun conditionText(condition: String, price: String): String = when (cond
 @Composable
 fun AlertListScreen(viewModel: MainViewModel) {
     val alerts by viewModel.alertList.collectAsState()
+    val priceState by viewModel.priceState.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
     var editingAlert    by remember { mutableStateOf<Alert?>(null) }
     var searchVisible   by remember { mutableStateOf(false) }
@@ -147,17 +151,48 @@ fun AlertListScreen(viewModel: MainViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AssistChip(
+                    SuggestionChip(
                         onClick = {},
-                        label = { Text("Active: $activeCount", style = MaterialTheme.typography.labelMedium) }
+                        label = { Text("Active: $activeCount", style = MaterialTheme.typography.labelMedium) },
+                        icon = {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        colors = ChipDefaults.suggestionChipColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            iconContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
                     )
-                    AssistChip(
+                    SuggestionChip(
                         onClick = {},
-                        label = { Text("Paused: $pausedCount", style = MaterialTheme.typography.labelMedium) }
+                        label = { Text("Paused: $pausedCount", style = MaterialTheme.typography.labelMedium) },
+                        icon = {
+                            Icon(
+                                Icons.Default.PauseCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        colors = ChipDefaults.suggestionChipColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            labelColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                            iconContentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
                     )
-                    AssistChip(
+                    SuggestionChip(
                         onClick = {},
-                        label = { Text("Total: ${alerts.size}", style = MaterialTheme.typography.labelMedium) }
+                        label = { Text("Total: ${alerts.size}", style = MaterialTheme.typography.labelMedium) },
+                        icon = {
+                            Icon(
+                                Icons.Default.List,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     )
                 }
 
@@ -209,7 +244,8 @@ fun AlertListScreen(viewModel: MainViewModel) {
                             alert = alert,
                             onDelete = { viewModel.deleteAlert(alert.id) },
                             onToggle = { viewModel.toggleAlertActive(alert.id, it) },
-                            onEdit   = { editingAlert = alert }
+                            onEdit   = { editingAlert = alert },
+                            currentPrice = priceState[alert.symbol]?.price
                         )
                     }
                 }
@@ -288,7 +324,8 @@ private fun AlertSwipeDismissItem(
     alert: Alert,
     onDelete: () -> Unit,
     onToggle: (Boolean) -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    currentPrice: Double? = null
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { it == SwipeToDismissBoxValue.EndToStart }
@@ -318,7 +355,7 @@ private fun AlertSwipeDismissItem(
             }
         }
     ) {
-        AlertListItem(alert = alert, onToggle = onToggle, onEdit = onEdit)
+        AlertListItem(alert = alert, onToggle = onToggle, onEdit = onEdit, currentPrice = currentPrice)
     }
 }
 
@@ -327,7 +364,8 @@ private fun AlertSwipeDismissItem(
 internal fun AlertListItem(
     alert: Alert,
     onToggle: (Boolean) -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    currentPrice: Double? = null
 ) {
     val info      = SymbolInfo.find(alert.symbol)
     val price     = alert.targetPrice.formatPriceDynamic(info.getDisplayDecimals())
@@ -338,7 +376,7 @@ internal fun AlertListItem(
     val lastTriggeredText = "Never triggered"
 
     Surface(
-        color = MaterialTheme.colorScheme.surface,
+        color = accentColor.copy(alpha = 0.04f),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -352,7 +390,7 @@ internal fun AlertListItem(
             Box(
                 modifier = Modifier
                     .width(3.dp)
-                    .height(48.dp)
+                    .fillMaxHeight()
                     .background(
                         color = accentColor.copy(alpha = contentAlpha),
                         shape = RoundedCornerShape(Radius.pill)
@@ -374,7 +412,7 @@ internal fun AlertListItem(
                     ) {
                         Text(
                             text = alert.symbol,
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.ExtraBold,
                             color = accentColor.copy(alpha = contentAlpha),
                             modifier = Modifier.padding(horizontal = Spacing.xs, vertical = 2.dp)
@@ -403,6 +441,20 @@ internal fun AlertListItem(
                             modifier = Modifier.padding(horizontal = Spacing.xs, vertical = 2.dp)
                         )
                     }
+                }
+
+                // Current price row (shown when price data is available)
+                val currentPriceText = currentPrice?.let {
+                    val priceInfo = SymbolInfo.find(alert.symbol)
+                    "Now: ${it.formatPriceDynamic(priceInfo.getDisplayDecimals())}"
+                } ?: ""
+                if (currentPriceText.isNotEmpty()) {
+                    Text(
+                        text = currentPriceText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f * contentAlpha),
+                        maxLines = 1
+                    )
                 }
 
                 // Line 2: last triggered text (left) + switch (right)

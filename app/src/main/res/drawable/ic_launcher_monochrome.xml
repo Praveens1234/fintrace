@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Rising bar chart bars -->
+    <path android:fillColor="#FFFFFF" android:pathData="M28,72 L34,72 L34,58 L28,58 Z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M41,72 L47,72 L47,48 L41,48 Z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M54,72 L60,72 L60,36 L54,36 Z" />
+
+    <!-- Trend line -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M31,58 L44,48 L57,36 L72,24" />
+
+    <!-- Arrow tip -->
+    <path android:fillColor="#FFFFFF" android:pathData="M72,24 L65,26 L69,32 Z" />
+
+    <!-- FT monogram -->
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.5" android:strokeLineCap="round" android:pathData="M23,80 L23,90" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.5" android:strokeLineCap="round" android:pathData="M23,80 L29,80" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.5" android:strokeLineCap="round" android:pathData="M23,85 L28,85" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.5" android:strokeLineCap="round" android:pathData="M32,80 L40,80" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.5" android:strokeLineCap="round" android:pathData="M36,80 L36,90" />
+</vector>
