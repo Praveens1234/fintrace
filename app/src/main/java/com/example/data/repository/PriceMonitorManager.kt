@@ -4,16 +4,25 @@ import android.content.Context
 import android.util.Log
 import androidx.room.Room
 import com.example.data.database.AppDatabase
+import com.example.data.database.MIGRATION_2_3
+import com.example.data.model.AccountSnapshot
+import com.example.data.model.AccountTransaction
 import com.example.data.model.Alert
 import com.example.data.model.AppSetting
+import com.example.data.model.PendingOrder
 import com.example.data.model.PriceTick
 import com.example.data.model.SymbolInfo
 import com.example.data.model.SymbolState
+import com.example.data.model.Trade
 import com.example.data.model.TriggerHistory
 import com.example.data.model.formatPriceDynamic
 import com.example.data.model.getDisplayDecimals
 import com.example.data.market.MarketSchedule
+import com.example.data.trading.TradingMath
 import com.example.service.NotificationHelper
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import okio.BufferedSource
 import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,7 +71,7 @@ class PriceMonitorManager private constructor(context: Context) {
         appContext,
         AppDatabase::class.java,
         "fintrace_database"
-    ).fallbackToDestructiveMigration(true).build()
+    ).addMigrations(MIGRATION_2_3).fallbackToDestructiveMigration(true).build()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var connectionJob: Job? = null
@@ -101,6 +110,9 @@ class PriceMonitorManager private constructor(context: Context) {
 
     @Volatile
     private var avPollingJob: Job? = null
+
+    @Volatile
+    private var oandaStreamJob: Job? = null
 
     @Volatile
     private var cachedTtsLanguage = "en-US"
@@ -225,6 +237,30 @@ class PriceMonitorManager private constructor(context: Context) {
     private val _nextMarketChangeAt = MutableStateFlow(MarketSchedule.nextChange().toEpochMilli())
     val nextMarketChangeAt: StateFlow<Long> = _nextMarketChangeAt.asStateFlow()
 
+    // ── VIRTUAL TRADING STATE ─────────────────────────────────────────────
+    // All trade/account mutations are serialized through tradeMutex so that cross-symbol updates to
+    // the shared balance/margin stay atomic (data-integrity requirement). Live UI state is held in
+    // memory and recomputed each tick; the database is written only on discrete events.
+    private val tradeMutex = Mutex()
+
+    private val _accountSnapshot = MutableStateFlow(AccountSnapshot())
+    val accountSnapshot: StateFlow<AccountSnapshot> = _accountSnapshot.asStateFlow()
+
+    private val _liveTradePnl = MutableStateFlow<Map<Int, Double>>(emptyMap())
+    val liveTradePnl: StateFlow<Map<Int, Double>> = _liveTradePnl.asStateFlow()
+
+    // Surfaces the result of the latest trade action (rejections, fills) for one-shot UI messages.
+    private val _tradeMessage = MutableStateFlow<String?>(null)
+    val tradeMessage: StateFlow<String?> = _tradeMessage.asStateFlow()
+    fun consumeTradeMessage() { _tradeMessage.value = null }
+
+    @Volatile private var openTradesCache: List<Trade> = emptyList()
+    @Volatile private var activeOrdersCache: List<PendingOrder> = emptyList()
+    @Volatile private var hasTradingActivity = false
+    @Volatile private var accountBalance = 0.0
+    @Volatile private var leverage = 100.0
+    @Volatile private var stopoutLevel = 50.0
+
     private var activeWebSocket: WebSocket? = null
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -285,6 +321,27 @@ class PriceMonitorManager private constructor(context: Context) {
             }
 
             initializePriceCache()
+
+            // Load virtual-trading account config and keep trade/order caches fresh.
+            accountBalance = db.accountTransactionDao().getLatestBalance()
+                ?: (getSetting("account_balance")?.toDoubleOrNull() ?: 0.0)
+            leverage = (getSetting("account_leverage")?.toDoubleOrNull() ?: 100.0).coerceAtLeast(1.0)
+            stopoutLevel = getSetting("account_stopout_level")?.toDoubleOrNull() ?: 50.0
+            tradeAlertsEnabled = (getSetting("trade_alerts_enabled") ?: "true") == "true"
+            tradeAlertSoundMode = getSetting("trade_alert_sound_mode") ?: "Both"
+            launch {
+                db.tradeDao().getOpenTradesFlow().collect { list ->
+                    openTradesCache = list
+                    hasTradingActivity = list.isNotEmpty() || activeOrdersCache.isNotEmpty()
+                    recomputeAccount()
+                }
+            }
+            launch {
+                db.pendingOrderDao().getPendingOrdersFlow().collect { list ->
+                    activeOrdersCache = list
+                    hasTradingActivity = list.isNotEmpty() || openTradesCache.isNotEmpty()
+                }
+            }
 
             // Start observing live ticker symbols config (collects a Flow forever -> own coroutine)
             launch {
@@ -443,6 +500,11 @@ class PriceMonitorManager private constructor(context: Context) {
                             startAlphaVantagePolling(apiKey)
                         }
                     }
+                    PriceProvider.OANDA_V20 -> {
+                        if (oandaStreamJob == null || oandaStreamJob?.isActive != true) {
+                            startOandaStreaming(apiKey)
+                        }
+                    }
                     else -> {
                         if (activeWebSocket == null || _connectionStatus.value == "CLOSED" || _connectionStatus.value == "OFFLINE") {
                             connectToProvider(apiKey, provider)
@@ -464,6 +526,8 @@ class PriceMonitorManager private constructor(context: Context) {
         activeWebSocket = null
         avPollingJob?.cancel()
         avPollingJob = null
+        oandaStreamJob?.cancel()
+        oandaStreamJob = null
     }
 
     private fun closeSocket(reason: String) = closeConnections(reason)
@@ -473,6 +537,8 @@ class PriceMonitorManager private constructor(context: Context) {
         connectionJob?.cancel()
         avPollingJob?.cancel()
         avPollingJob = null
+        oandaStreamJob?.cancel()
+        oandaStreamJob = null
         activeWebSocket?.close(1000, "App closed")
         activeWebSocket = null
 
@@ -570,6 +636,10 @@ class PriceMonitorManager private constructor(context: Context) {
             PriceProvider.TWELVE_DATA -> connectToTwelveData(apiKey)
             PriceProvider.FINNHUB -> connectToFinnhub(apiKey)
             PriceProvider.ALPHA_VANTAGE -> startAlphaVantagePolling(apiKey)
+            PriceProvider.TRADERMADE -> connectToTraderMade(apiKey)
+            PriceProvider.OANDA_V20 -> startOandaStreaming(apiKey)
+            PriceProvider.ALLTICK -> connectToAllTick(apiKey)
+            PriceProvider.POLYGON -> connectToPolygon(apiKey)
         }
     }
 
@@ -738,6 +808,447 @@ class PriceMonitorManager private constructor(context: Context) {
     private fun fromFinnhubSymbol(finnhubSymbol: String): String =
         finnhubSymbol.removePrefix("OANDA:").replace("_", "/")
 
+    // ── TRADERMADE SOCKET INTEGRATION ─────────────────────────────────────
+    // wss://stream.tradermade.com/feedAdv — login then subscribe; symbols as "EURUSD:QUOTE".
+    private fun connectToTraderMade(apiKey: String) {
+        connectionJob?.cancel()
+        connectionJob = scope.launch {
+            _connectionStatus.value = "CONNECTING"
+            logEvent("SYSTEM", null, "Connecting to TraderMade WebSocket feed...")
+            val request = Request.Builder()
+                .url("wss://stream.tradermade.com/feedAdv")
+                .build()
+
+            activeWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    reconnectCount = 0
+                    // TraderMade requires an explicit login frame before subscriptions.
+                    try {
+                        val login = JSONObject()
+                        login.put("action", "login")
+                        login.put("key", apiKey)
+                        login.put("fmt", "JSON")
+                        webSocket.send(login.toString())
+                    } catch (e: Exception) {
+                        Log.e("PriceMonitor", "TraderMade login error: ${e.message}")
+                    }
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    try {
+                        val json = JSONObject(text)
+                        when (json.optString("type")) {
+                            "login_ok" -> {
+                                _connectionStatus.value = "LIVE"
+                                logEvent("SYSTEM", null, "Connected to TraderMade successfully (symbol limit ${json.optInt("symbol_limit", 0)}).")
+                                sendTraderMadeSubscribe(webSocket)
+                            }
+                            "login_reject" -> {
+                                logEvent("ERROR", null, "TraderMade login rejected: ${json.optString("reason")}")
+                            }
+                            "QUOTE", "LAST_QUOTE" -> {
+                                val tmSymbol = json.optString("s")
+                                val bid = json.optString("b").toDoubleOrNull()
+                                val ask = json.optString("a").toDoubleOrNull()
+                                val mid = when {
+                                    bid != null && ask != null -> (bid + ask) / 2.0
+                                    bid != null -> bid
+                                    ask != null -> ask
+                                    else -> json.optString("m").toDoubleOrNull()
+                                }
+                                val appSymbol = fromTraderMadeSymbol(tmSymbol)
+                                if (appSymbol.isNotBlank() && mid != null && mid > 0) {
+                                    dispatchNormalized(appSymbol, mid)
+                                }
+                            }
+                            "error" -> logEvent("ERROR", null, "TraderMade error: $text")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("PriceMonitor", "TraderMade message parse: ${e.message}")
+                    }
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    _connectionStatus.value = "OFFLINE"
+                    logEvent("SYSTEM", null, "TraderMade connection closed: $reason")
+                    attemptReconnect(apiKey, PriceProvider.TRADERMADE)
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    reconnectCount++
+                    _connectionStatus.value = "OFFLINE"
+                    logEvent("ERROR", null, "TraderMade connection failed (${t.message}). Retry #$reconnectCount...")
+                    attemptReconnect(apiKey, PriceProvider.TRADERMADE)
+                }
+            })
+
+            // Dynamic subscription sync (TraderMade does not persist subs across reconnects).
+            launch {
+                kotlinx.coroutines.flow.combine(_activeSymbols, _liveTickerSymbols) { active, ticker ->
+                    (active + ticker).distinct()
+                }.collect {
+                    val ws = activeWebSocket
+                    if (_connectionStatus.value == "LIVE" && ws != null) sendTraderMadeSubscribe(ws)
+                }
+            }
+        }
+    }
+
+    private fun sendTraderMadeSubscribe(webSocket: WebSocket) {
+        try {
+            val list = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
+                .map { toTraderMadeSymbol(it) }
+            if (list.isEmpty()) return
+            val sub = JSONObject()
+            sub.put("action", "subscribe")
+            sub.put("symbols", org.json.JSONArray(list))
+            webSocket.send(sub.toString())
+            logEvent("SYSTEM", null, "Synced TraderMade subscriptions: ${list.joinToString(", ")}")
+        } catch (e: Exception) {
+            Log.e("PriceMonitor", "TraderMade subscribe error: ${e.message}")
+        }
+    }
+
+    private fun toTraderMadeSymbol(appSymbol: String): String =
+        appSymbol.replace("/", "").uppercase() + ":QUOTE"
+
+    private fun fromTraderMadeSymbol(tmSymbol: String): String {
+        val raw = tmSymbol.substringBefore(":").uppercase()
+        return if (raw.length == 6) raw.substring(0, 3) + "/" + raw.substring(3) else raw
+    }
+
+    // ── OANDA v20 HTTP STREAMING INTEGRATION ──────────────────────────────
+    // GET {stream}/v3/accounts/{id}/pricing/stream?instruments=EUR_USD,... ; Bearer token.
+    // Newline-delimited JSON: PRICE objects and HEARTBEAT keep-alives every 5s.
+    private fun startOandaStreaming(token: String) {
+        oandaStreamJob?.cancel()
+        oandaStreamJob = scope.launch(Dispatchers.IO) {
+            _connectionStatus.value = "CONNECTING"
+            val accountId = getSetting(PriceProvider.OANDA_ACCOUNT_ID_KEY)
+            if (accountId.isNullOrBlank()) {
+                _connectionStatus.value = "OFFLINE"
+                logEvent("ERROR", null, "OANDA requires an Account ID. Add it in Settings → Connection & Market Feed.")
+                return@launch
+            }
+            val env = (getSetting(PriceProvider.OANDA_ENVIRONMENT_KEY) ?: "practice").lowercase()
+            val host = if (env == "live") "stream-fxtrade.oanda.com" else "stream-fxpractice.oanda.com"
+            logEvent("SYSTEM", null, "Connecting to OANDA v20 $env streaming feed...")
+
+            val streamClient = OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(0, TimeUnit.SECONDS) // streaming: no read timeout
+                .build()
+
+            while (isActive && MarketSchedule.isOpenNow()) {
+                val instruments = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
+                    .map { toOandaSymbol(it) }
+                if (instruments.isEmpty()) { delay(5_000L); continue }
+                val url = "https://$host/v3/accounts/$accountId/pricing/stream" +
+                    "?instruments=" + instruments.joinToString("%2C")
+                try {
+                    val request = Request.Builder()
+                        .url(url)
+                        .header("Authorization", "Bearer $token")
+                        .build()
+                    streamClient.newCall(request).execute().use { resp ->
+                        if (!resp.isSuccessful) {
+                            logEvent("ERROR", null, "OANDA stream HTTP ${resp.code}: ${resp.message}")
+                            delay(10_000L)
+                            return@use
+                        }
+                        _connectionStatus.value = "LIVE"
+                        reconnectCount = 0
+                        logEvent("SYSTEM", null, "Connected to OANDA v20 streaming successfully.")
+                        val source: BufferedSource = resp.body!!.source()
+                        // Re-open the stream when the active instrument set changes.
+                        val subscribed = instruments.toSet()
+                        while (isActive && MarketSchedule.isOpenNow()) {
+                            val line = source.readUtf8Line() ?: break
+                            if (line.isBlank()) continue
+                            val json = JSONObject(line)
+                            if (json.optString("type") == "PRICE") {
+                                val instrument = json.optString("instrument")
+                                val bids = json.optJSONArray("bids")
+                                val asks = json.optJSONArray("asks")
+                                val bid = bids?.optJSONObject(0)?.optString("price")?.toDoubleOrNull()
+                                val ask = asks?.optJSONObject(0)?.optString("price")?.toDoubleOrNull()
+                                val mid = when {
+                                    bid != null && ask != null -> (bid + ask) / 2.0
+                                    bid != null -> bid
+                                    ask != null -> ask
+                                    else -> null
+                                }
+                                val appSymbol = fromOandaSymbol(instrument)
+                                if (appSymbol.isNotBlank() && mid != null && mid > 0) {
+                                    processSinglePriceUpdateFromIsolate(-1, appSymbol, mid, System.currentTimeMillis())
+                                }
+                            }
+                            // HEARTBEAT messages are ignored (keep-alive only).
+                            val current = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
+                                .map { toOandaSymbol(it) }.toSet()
+                            if (current != subscribed) break // reconnect with new instrument list
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (isActive) {
+                        reconnectCount++
+                        logEvent("ERROR", null, "OANDA stream error (${e.message}). Retry #$reconnectCount...")
+                        delay((reconnectCount.coerceAtMost(3) * 5_000L).coerceAtLeast(5_000L))
+                    }
+                }
+            }
+            _connectionStatus.value = "OFFLINE"
+            logEvent("SYSTEM", null, "OANDA streaming stopped.")
+        }
+    }
+
+    private fun toOandaSymbol(appSymbol: String): String = appSymbol.replace("/", "_").uppercase()
+    private fun fromOandaSymbol(oandaSymbol: String): String = oandaSymbol.replace("_", "/").uppercase()
+
+    // ── ALLTICK SOCKET INTEGRATION ────────────────────────────────────────
+    // wss://quote.alltick.co/quote-b-ws-api?token=TOKEN — cmd_id protocol, heartbeat 22000.
+    private fun connectToAllTick(apiKey: String) {
+        connectionJob?.cancel()
+        connectionJob = scope.launch {
+            _connectionStatus.value = "CONNECTING"
+            logEvent("SYSTEM", null, "Connecting to AllTick WebSocket feed...")
+            val request = Request.Builder()
+                .url("wss://quote.alltick.co/quote-b-ws-api?token=$apiKey")
+                .build()
+
+            activeWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    _connectionStatus.value = "LIVE"
+                    reconnectCount = 0
+                    logEvent("SYSTEM", null, "Connected to AllTick successfully.")
+                    sendAllTickSubscribe(webSocket)
+                    startAllTickHeartbeat(webSocket)
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    try {
+                        val json = JSONObject(text)
+                        val data = json.optJSONObject("data") ?: return
+                        val code = data.optString("code")
+                        val price = data.optString("price").toDoubleOrNull()
+                        if (code.isNotBlank() && price != null && price > 0) {
+                            val appSymbol = fromAllTickSymbol(code)
+                            if (appSymbol.isNotBlank()) dispatchNormalized(appSymbol, price)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("PriceMonitor", "AllTick message parse: ${e.message}")
+                    }
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    _connectionStatus.value = "OFFLINE"
+                    logEvent("SYSTEM", null, "AllTick connection closed: $reason")
+                    attemptReconnect(apiKey, PriceProvider.ALLTICK)
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    reconnectCount++
+                    _connectionStatus.value = "OFFLINE"
+                    logEvent("ERROR", null, "AllTick connection failed (${t.message}). Retry #$reconnectCount...")
+                    attemptReconnect(apiKey, PriceProvider.ALLTICK)
+                }
+            })
+
+            launch {
+                kotlinx.coroutines.flow.combine(_activeSymbols, _liveTickerSymbols) { active, ticker ->
+                    (active + ticker).distinct()
+                }.collect {
+                    val ws = activeWebSocket
+                    if (_connectionStatus.value == "LIVE" && ws != null) sendAllTickSubscribe(ws)
+                }
+            }
+        }
+    }
+
+    private val allTickSeq = java.util.concurrent.atomic.AtomicInteger(1)
+
+    private fun sendAllTickSubscribe(webSocket: WebSocket) {
+        try {
+            val all = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
+            // Free tier caps at 5 product codes per subscription.
+            val capped = all.take(5)
+            if (capped.size < all.size) {
+                logEvent("SYSTEM", null, "AllTick free tier supports 5 symbols; streaming the first 5: ${capped.joinToString(", ")}")
+            }
+            if (capped.isEmpty()) return
+            val symbolList = org.json.JSONArray()
+            capped.forEach { sym ->
+                val item = JSONObject()
+                item.put("code", toAllTickSymbol(sym))
+                item.put("depth_level", 5)
+                symbolList.put(item)
+            }
+            val data = JSONObject()
+            data.put("symbol_list", symbolList)
+            val msg = JSONObject()
+            msg.put("cmd_id", 22004) // latest trade tick
+            msg.put("seq_id", allTickSeq.getAndIncrement())
+            msg.put("trace", java.util.UUID.randomUUID().toString())
+            msg.put("data", data)
+            webSocket.send(msg.toString())
+            logEvent("SYSTEM", null, "Synced AllTick subscriptions: ${capped.joinToString(", ")}")
+        } catch (e: Exception) {
+            Log.e("PriceMonitor", "AllTick subscribe error: ${e.message}")
+        }
+    }
+
+    private fun startAllTickHeartbeat(webSocket: WebSocket) {
+        scope.launch {
+            while (_connectionStatus.value == "LIVE" && activeWebSocket == webSocket) {
+                delay(10_000L) // AllTick requires a heartbeat every 10 seconds
+                try {
+                    val hb = JSONObject()
+                    hb.put("cmd_id", 22000)
+                    hb.put("seq_id", allTickSeq.getAndIncrement())
+                    hb.put("trace", java.util.UUID.randomUUID().toString())
+                    hb.put("data", JSONObject())
+                    webSocket.send(hb.toString())
+                } catch (e: Exception) {
+                    break
+                }
+            }
+        }
+    }
+
+    // AllTick uses bespoke codes for metals.
+    private fun toAllTickSymbol(appSymbol: String): String = when (appSymbol.uppercase()) {
+        "XAU/USD" -> "GOLD"
+        "XAG/USD" -> "Silver"
+        else -> appSymbol.replace("/", "").uppercase()
+    }
+
+    private fun fromAllTickSymbol(code: String): String = when (code.uppercase()) {
+        "GOLD" -> "XAU/USD"
+        "SILVER" -> "XAG/USD"
+        else -> if (code.length == 6) code.substring(0, 3).uppercase() + "/" + code.substring(3).uppercase() else code
+    }
+
+    // ── POLYGON.IO SOCKET INTEGRATION ─────────────────────────────────────
+    // wss://socket.polygon.io/forex — auth then subscribe "C.EUR/USD". Messages arrive as arrays.
+    private fun connectToPolygon(apiKey: String) {
+        connectionJob?.cancel()
+        connectionJob = scope.launch {
+            _connectionStatus.value = "CONNECTING"
+            logEvent("SYSTEM", null, "Connecting to Polygon.io WebSocket feed...")
+            val request = Request.Builder()
+                .url("wss://socket.polygon.io/forex")
+                .build()
+
+            activeWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    reconnectCount = 0
+                    try {
+                        val auth = JSONObject()
+                        auth.put("action", "auth")
+                        auth.put("params", apiKey)
+                        webSocket.send(auth.toString())
+                    } catch (e: Exception) {
+                        Log.e("PriceMonitor", "Polygon auth error: ${e.message}")
+                    }
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    try {
+                        val arr = org.json.JSONArray(text)
+                        for (i in 0 until arr.length()) {
+                            val msg = arr.optJSONObject(i) ?: continue
+                            when (msg.optString("ev")) {
+                                "status" -> {
+                                    val status = msg.optString("status")
+                                    val m = msg.optString("message")
+                                    if (status == "auth_success") {
+                                        _connectionStatus.value = "LIVE"
+                                        logEvent("SYSTEM", null, "Connected to Polygon.io successfully.")
+                                        sendPolygonSubscribe(webSocket)
+                                    } else if (status == "auth_failed" || status == "error") {
+                                        logEvent("ERROR", null, "Polygon status: $m")
+                                    }
+                                }
+                                "C" -> {
+                                    val pair = msg.optString("p")
+                                    val ask = msg.optDouble("a", Double.NaN)
+                                    val bid = msg.optDouble("b", Double.NaN)
+                                    val mid = when {
+                                        !ask.isNaN() && !bid.isNaN() -> (ask + bid) / 2.0
+                                        !bid.isNaN() -> bid
+                                        !ask.isNaN() -> ask
+                                        else -> Double.NaN
+                                    }
+                                    if (pair.isNotBlank() && !mid.isNaN() && mid > 0) {
+                                        dispatchNormalized(pair.uppercase(), mid)
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("PriceMonitor", "Polygon message parse: ${e.message}")
+                    }
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    _connectionStatus.value = "OFFLINE"
+                    logEvent("SYSTEM", null, "Polygon.io connection closed: $reason")
+                    attemptReconnect(apiKey, PriceProvider.POLYGON)
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    reconnectCount++
+                    _connectionStatus.value = "OFFLINE"
+                    logEvent("ERROR", null, "Polygon.io connection failed (${t.message}). Retry #$reconnectCount...")
+                    attemptReconnect(apiKey, PriceProvider.POLYGON)
+                }
+            })
+
+            launch {
+                kotlinx.coroutines.flow.combine(_activeSymbols, _liveTickerSymbols) { active, ticker ->
+                    (active + ticker).distinct()
+                }.collect {
+                    val ws = activeWebSocket
+                    if (_connectionStatus.value == "LIVE" && ws != null) sendPolygonSubscribe(ws)
+                }
+            }
+        }
+    }
+
+    private fun sendPolygonSubscribe(webSocket: WebSocket) {
+        try {
+            // Polygon's forex cluster covers FX pairs only (metals are not on this feed).
+            val all = (_activeSymbols.value + _liveTickerSymbols.value).distinct()
+            val supported = all.filterNot { it.uppercase().startsWith("XAU") || it.uppercase().startsWith("XAG") }
+            val skipped = all - supported.toSet()
+            if (skipped.isNotEmpty()) {
+                logEvent("SYSTEM", null, "Polygon.io forex feed does not carry metals; skipping ${skipped.joinToString(", ")}.")
+            }
+            if (supported.isEmpty()) return
+            val params = supported.joinToString(",") { "C.${it.uppercase()}" }
+            val sub = JSONObject()
+            sub.put("action", "subscribe")
+            sub.put("params", params)
+            webSocket.send(sub.toString())
+            logEvent("SYSTEM", null, "Synced Polygon.io subscriptions: $params")
+        } catch (e: Exception) {
+            Log.e("PriceMonitor", "Polygon subscribe error: ${e.message}")
+        }
+    }
+
+    /** Normalize an (appSymbol, price) tick into the internal packet and dispatch to the isolate pool. */
+    private fun dispatchNormalized(appSymbol: String, price: Double) {
+        try {
+            val normalized = JSONObject()
+            normalized.put("event", "price")
+            normalized.put("symbol", appSymbol)
+            normalized.put("price", price)
+            isolatePool.dispatch(normalized.toString())
+        } catch (e: Exception) {
+            Log.e("PriceMonitor", "Normalize/dispatch error: ${e.message}")
+        }
+    }
+
     private fun startHeartbeat(webSocket: WebSocket) {
         scope.launch {
             while (_connectionStatus.value == "LIVE" && activeWebSocket == webSocket) {
@@ -873,6 +1384,396 @@ class PriceMonitorManager private constructor(context: Context) {
         }
     }
 
+    // ── VIRTUAL TRADING ENGINE ────────────────────────────────────────────
+
+    @Volatile private var tradeAlertsEnabled = true
+    @Volatile private var tradeAlertSoundMode = "Both" // "Both" | "Tone" | "TTS" | "Silent"
+
+    fun getLeverage(): Double = leverage
+    fun getStopoutLevel(): Double = stopoutLevel
+
+    private fun pip(symbol: String) = SymbolInfo.find(symbol).getDisplayDecimals()
+
+    private fun conversionFactor(symbol: String, logIfMissing: Boolean): Double {
+        val f = TradingMath.quoteToUsdFactor(symbol, _priceState.value)
+        if (f == null && logIfMissing) {
+            logEvent("SYSTEM", symbol, "No USD conversion pair active for ${TradingMath.quoteCurrency(symbol)}; PNL uses a 1.0 fallback factor until a conversion pair streams.")
+        }
+        return f ?: 1.0
+    }
+
+    /** Recompute the live account snapshot and per-trade PNL map from in-memory caches (no DB). */
+    private fun recomputeAccount() {
+        val prices = _priceState.value
+        val trades = openTradesCache
+        _accountSnapshot.value = TradingMath.accountSnapshot(trades, accountBalance, prices)
+        if (trades.isEmpty()) {
+            if (_liveTradePnl.value.isNotEmpty()) _liveTradePnl.value = emptyMap()
+            return
+        }
+        val map = HashMap<Int, Double>(trades.size)
+        for (t in trades) {
+            val px = prices[t.symbol]?.price ?: t.entryPrice
+            map[t.id] = TradingMath.unrealizedPnlUsd(t, px, prices)
+        }
+        _liveTradePnl.value = map
+    }
+
+    /** Per-tick trade processing: fill pending orders, hit SL/TP, then guard margin/stop-out. */
+    private suspend fun evaluateTrades(symbol: String, price: Double) {
+        if (!hasTradingActivity) return
+        try {
+            tradeMutex.withLock {
+                // 1) Pending orders for this symbol.
+                val orders = db.pendingOrderDao().getActiveOrdersForSymbol(symbol)
+                for (order in orders) {
+                    if (shouldFill(order, price)) fillPendingOrder(order, price)
+                }
+                // 2) Open trades for this symbol: SL/TP.
+                val trades = db.tradeDao().getOpenTradesForSymbol(symbol)
+                for (t in trades) {
+                    val tp = t.takeProfit
+                    val sl = t.stopLoss
+                    val isLong = t.side.equals("LONG", ignoreCase = true)
+                    when {
+                        tp != null && ((isLong && price >= tp) || (!isLong && price <= tp)) ->
+                            closeTradeAtPrice(t, price, "TP")
+                        sl != null && ((isLong && price <= sl) || (!isLong && price >= sl)) ->
+                            closeTradeAtPrice(t, price, "SL")
+                    }
+                }
+                // 3) Account-level margin guard.
+                enforceStopOut()
+            }
+        } catch (e: Exception) {
+            Log.e("PriceMonitor", "evaluateTrades error for $symbol: ${e.message}", e)
+        }
+        recomputeAccount()
+    }
+
+    private fun shouldFill(order: PendingOrder, price: Double): Boolean {
+        val isLong = order.side.equals("LONG", ignoreCase = true)
+        val isStop = order.orderKind.equals("STOP", ignoreCase = true)
+        return when {
+            isLong && !isStop -> price <= order.targetPrice   // BUY LIMIT
+            isLong && isStop -> price >= order.targetPrice     // BUY STOP
+            !isLong && !isStop -> price >= order.targetPrice   // SELL LIMIT
+            else -> price <= order.targetPrice                 // SELL STOP
+        }
+    }
+
+    /** Convert a triggered pending order into an open Trade. Must hold tradeMutex. */
+    private suspend fun fillPendingOrder(order: PendingOrder, fillPrice: Double) {
+        val now = System.currentTimeMillis()
+        val margin = TradingMath.requiredMarginUsd(order.symbol, order.lots, fillPrice, leverage, _priceState.value)
+        val trade = Trade(
+            symbol = order.symbol,
+            side = order.side,
+            lots = order.lots,
+            entryPrice = fillPrice,
+            stopLoss = order.stopLoss,
+            takeProfit = order.takeProfit,
+            openTime = now,
+            status = "OPEN",
+            originOrderId = order.id,
+            marginUsd = margin
+        )
+        val tradeId = db.tradeDao().insert(trade).toInt()
+        db.pendingOrderDao().update(order.copy(status = "FILLED", executedAt = now, resultingTradeId = tradeId))
+        val decs = pip(order.symbol)
+        logEvent("TRADE", order.symbol, "ORDER #${order.id} FILLED → Trade #$tradeId ${order.side} ${order.lots} lot @ ${fillPrice.formatPriceDynamic(decs)}")
+        fireTradeAlert(
+            "Order Executed",
+            "ORDER FILLED — ${order.symbol} ${order.side} ${fmtLots(order.lots)} lot · entry ${fillPrice.formatPriceDynamic(decs)} · Trade #$tradeId"
+        )
+    }
+
+    /** Fully close [trade] at [exitPrice]. Must hold tradeMutex. */
+    private suspend fun closeTradeAtPrice(trade: Trade, exitPrice: Double, closedBy: String) {
+        val now = System.currentTimeMillis()
+        val factor = conversionFactor(trade.symbol, true)
+        val realized = TradingMath.realizedPnlUsd(trade, exitPrice, trade.lots, factor)
+        val totalRealized = trade.realizedPnl + realized
+        db.tradeDao().update(
+            trade.copy(
+                status = "CLOSED",
+                exitPrice = exitPrice,
+                closeTime = now,
+                realizedPnl = totalRealized,
+                closedBy = closedBy,
+                marginUsd = 0.0
+            )
+        )
+        bookRealized(realized, "Trade #${trade.id} closed ($closedBy)", trade.id)
+        val decs = pip(trade.symbol)
+        logEvent("TRADE", trade.symbol, "TRADE #${trade.id} CLOSED ($closedBy) @ ${exitPrice.formatPriceDynamic(decs)} · PNL ${fmtUsd(realized)}")
+        fireTradeAlert(
+            closeLabel(closedBy),
+            "${closeLabel(closedBy)} — ${trade.symbol} ${trade.side} ${fmtLots(trade.lots)} lot · entry ${trade.entryPrice.formatPriceDynamic(decs)} → ${exitPrice.formatPriceDynamic(decs)} · PNL ${fmtUsd(realized)} · Balance ${fmtUsd(accountBalance)}"
+        )
+    }
+
+    /** Add realized PNL / cash movement to the balance and write a ledger transaction. Must hold tradeMutex. */
+    private suspend fun bookRealized(amount: Double, note: String, tradeId: Int?, type: String = "REALIZED_PNL") {
+        accountBalance += amount
+        saveSetting("account_balance", accountBalance.toString())
+        db.accountTransactionDao().insert(
+            AccountTransaction(
+                type = type,
+                amount = amount,
+                balanceAfter = accountBalance,
+                note = note,
+                relatedTradeId = tradeId
+            )
+        )
+    }
+
+    /** Close the worst-losing open position(s) while margin level is below the stop-out threshold. */
+    private suspend fun enforceStopOut() {
+        if (stopoutLevel <= 0) return
+        var guard = 0
+        while (guard++ < 50) {
+            val open = db.tradeDao().getOpenTrades()
+            if (open.isEmpty()) break
+            val snap = TradingMath.accountSnapshot(open, accountBalance, _priceState.value)
+            if (snap.usedMargin <= 0.0 || snap.marginLevel >= stopoutLevel) break
+            val worst = open.minByOrNull {
+                TradingMath.unrealizedPnlUsd(it, _priceState.value[it.symbol]?.price ?: it.entryPrice, _priceState.value)
+            } ?: break
+            val px = _priceState.value[worst.symbol]?.price ?: worst.entryPrice
+            logEvent("TRADE", worst.symbol, "STOP-OUT: margin level ${String.format(Locale.US, "%.0f", snap.marginLevel)}% < ${stopoutLevel.toInt()}%. Auto-closing worst position #${worst.id}.")
+            closeTradeAtPrice(worst, px, "STOPOUT")
+        }
+    }
+
+    // ── Public trade actions (invoked from the ViewModel) ─────────────────
+
+    suspend fun placeMarketOrder(symbol: String, side: String, lots: Double, entryPrice: Double, sl: Double?, tp: Double?): Boolean {
+        if (lots <= 0 || entryPrice <= 0) { _tradeMessage.value = "Enter a valid lot size and entry price."; return false }
+        return tradeMutex.withLock {
+            val margin = TradingMath.requiredMarginUsd(symbol, lots, entryPrice, leverage, _priceState.value)
+            val snap = TradingMath.accountSnapshot(openTradesCache, accountBalance, _priceState.value)
+            if (margin > snap.freeMargin) {
+                _tradeMessage.value = "Insufficient free margin: need ${fmtUsd(margin)}, have ${fmtUsd(snap.freeMargin)}."
+                return@withLock false
+            }
+            val now = System.currentTimeMillis()
+            val trade = Trade(
+                symbol = symbol, side = side, lots = lots, entryPrice = entryPrice,
+                stopLoss = sl, takeProfit = tp, openTime = now, status = "OPEN", marginUsd = margin
+            )
+            val id = db.tradeDao().insert(trade).toInt()
+            val decs = pip(symbol)
+            logEvent("TRADE", symbol, "MARKET ORDER → Trade #$id $side ${fmtLots(lots)} lot @ ${entryPrice.formatPriceDynamic(decs)} (margin ${fmtUsd(margin)})")
+            fireTradeAlert("Position Opened", "OPENED — $symbol $side ${fmtLots(lots)} lot @ ${entryPrice.formatPriceDynamic(decs)} · Trade #$id")
+            _tradeMessage.value = "Trade #$id opened."
+            true
+        }
+    }
+
+    suspend fun placePendingOrder(symbol: String, side: String, kind: String, lots: Double, targetPrice: Double, sl: Double?, tp: Double?): Boolean {
+        if (lots <= 0 || targetPrice <= 0) { _tradeMessage.value = "Enter a valid lot size and trigger price."; return false }
+        return tradeMutex.withLock {
+            val now = System.currentTimeMillis()
+            val order = PendingOrder(
+                symbol = symbol, side = side, orderKind = kind, lots = lots, targetPrice = targetPrice,
+                stopLoss = sl, takeProfit = tp, createdAt = now, status = "PENDING"
+            )
+            val id = db.pendingOrderDao().insert(order).toInt()
+            val decs = pip(symbol)
+            logEvent("TRADE", symbol, "PENDING ORDER #$id $kind $side ${fmtLots(lots)} lot @ ${targetPrice.formatPriceDynamic(decs)}")
+            _tradeMessage.value = "Order #$id placed."
+            true
+        }
+    }
+
+    suspend fun modifyPendingOrder(id: Int, targetPrice: Double, lots: Double, sl: Double?, tp: Double?) {
+        tradeMutex.withLock {
+            val o = db.pendingOrderDao().getById(id) ?: return@withLock
+            if (o.status != "PENDING") return@withLock
+            db.pendingOrderDao().update(o.copy(targetPrice = targetPrice, lots = lots, stopLoss = sl, takeProfit = tp))
+            logEvent("TRADE", o.symbol, "ORDER #$id modified.")
+        }
+    }
+
+    suspend fun cancelPendingOrder(id: Int) {
+        tradeMutex.withLock {
+            val o = db.pendingOrderDao().getById(id) ?: return@withLock
+            db.pendingOrderDao().update(o.copy(status = "CANCELLED", closedBy = "USER", executedAt = System.currentTimeMillis()))
+            logEvent("TRADE", o.symbol, "ORDER #$id cancelled by user.")
+        }
+    }
+
+    suspend fun modifyTrade(id: Int, sl: Double?, tp: Double?, entry: Double?) {
+        tradeMutex.withLock {
+            val t = db.tradeDao().getById(id) ?: return@withLock
+            if (t.status != "OPEN") return@withLock
+            val newEntry = entry ?: t.entryPrice
+            val newMargin = TradingMath.requiredMarginUsd(t.symbol, t.lots, newEntry, leverage, _priceState.value)
+            db.tradeDao().update(t.copy(stopLoss = sl, takeProfit = tp, entryPrice = newEntry, marginUsd = newMargin))
+            logEvent("TRADE", t.symbol, "TRADE #$id modified (SL/TP/entry).")
+        }
+        recomputeAccount()
+    }
+
+    suspend fun closeTrade(id: Int) {
+        tradeMutex.withLock {
+            val t = db.tradeDao().getById(id) ?: return@withLock
+            if (t.status != "OPEN") return@withLock
+            val px = _priceState.value[t.symbol]?.price ?: t.entryPrice
+            closeTradeAtPrice(t, px, "USER")
+        }
+        recomputeAccount()
+    }
+
+    suspend fun partialCloseTrade(id: Int, lotsToClose: Double) {
+        tradeMutex.withLock {
+            val t = db.tradeDao().getById(id) ?: return@withLock
+            if (t.status != "OPEN" || lotsToClose <= 0) return@withLock
+            if (lotsToClose >= t.lots) { closeTradeAtPrice(t, _priceState.value[t.symbol]?.price ?: t.entryPrice, "USER"); return@withLock }
+            val px = _priceState.value[t.symbol]?.price ?: t.entryPrice
+            val factor = conversionFactor(t.symbol, true)
+            val realized = TradingMath.realizedPnlUsd(t, px, lotsToClose, factor)
+            val remaining = t.lots - lotsToClose
+            val newMargin = if (t.lots > 0) t.marginUsd * (remaining / t.lots) else 0.0
+            db.tradeDao().update(t.copy(lots = remaining, realizedPnl = t.realizedPnl + realized, marginUsd = newMargin))
+            bookRealized(realized, "Trade #${t.id} partial close (${fmtLots(lotsToClose)} lot)", t.id)
+            val decs = pip(t.symbol)
+            logEvent("TRADE", t.symbol, "TRADE #$id PARTIAL CLOSE ${fmtLots(lotsToClose)} lot @ ${px.formatPriceDynamic(decs)} · PNL ${fmtUsd(realized)} · ${fmtLots(remaining)} lot remaining")
+            fireTradeAlert("Partial Close", "PARTIAL CLOSE — ${t.symbol} ${fmtLots(lotsToClose)} lot @ ${px.formatPriceDynamic(decs)} · PNL ${fmtUsd(realized)} · ${fmtLots(remaining)} lot left")
+        }
+        recomputeAccount()
+    }
+
+    suspend fun closeAllTrades() = closeMatchingTrades { true }
+    suspend fun closeAllProfitable() = closeMatchingTrades { t ->
+        TradingMath.unrealizedPnlUsd(t, _priceState.value[t.symbol]?.price ?: t.entryPrice, _priceState.value) > 0
+    }
+    suspend fun closeAllLosing() = closeMatchingTrades { t ->
+        TradingMath.unrealizedPnlUsd(t, _priceState.value[t.symbol]?.price ?: t.entryPrice, _priceState.value) < 0
+    }
+
+    private suspend fun closeMatchingTrades(predicate: (Trade) -> Boolean) {
+        tradeMutex.withLock {
+            val open = db.tradeDao().getOpenTrades()
+            for (t in open) {
+                if (predicate(t)) {
+                    val px = _priceState.value[t.symbol]?.price ?: t.entryPrice
+                    closeTradeAtPrice(t, px, "USER")
+                }
+            }
+        }
+        recomputeAccount()
+    }
+
+    suspend fun cancelAllPending() {
+        tradeMutex.withLock {
+            val orders = db.pendingOrderDao().getActiveOrders()
+            val now = System.currentTimeMillis()
+            for (o in orders) db.pendingOrderDao().update(o.copy(status = "CANCELLED", closedBy = "USER", executedAt = now))
+            if (orders.isNotEmpty()) logEvent("TRADE", null, "Cancelled ${orders.size} pending order(s).")
+        }
+    }
+
+    suspend fun deposit(amount: Double) {
+        if (amount <= 0) { _tradeMessage.value = "Enter a positive deposit amount."; return }
+        tradeMutex.withLock { bookRealized(amount, "Deposit", null, "DEPOSIT") }
+        logEvent("TRADE", null, "Deposited ${fmtUsd(amount)}. Balance ${fmtUsd(accountBalance)}.")
+        _tradeMessage.value = "Deposited ${fmtUsd(amount)}."
+        recomputeAccount()
+    }
+
+    suspend fun withdraw(amount: Double) {
+        if (amount <= 0) { _tradeMessage.value = "Enter a positive withdrawal amount."; return }
+        tradeMutex.withLock {
+            val snap = TradingMath.accountSnapshot(openTradesCache, accountBalance, _priceState.value)
+            if (amount > snap.freeMargin) {
+                _tradeMessage.value = "Cannot withdraw ${fmtUsd(amount)}: free margin is ${fmtUsd(snap.freeMargin)}."
+                return@withLock
+            }
+            bookRealized(-amount, "Withdrawal", null, "WITHDRAW")
+            logEvent("TRADE", null, "Withdrew ${fmtUsd(amount)}. Balance ${fmtUsd(accountBalance)}.")
+            _tradeMessage.value = "Withdrew ${fmtUsd(amount)}."
+        }
+        recomputeAccount()
+    }
+
+    suspend fun setLeverage(value: Double) {
+        leverage = value.coerceAtLeast(1.0)
+        saveSetting("account_leverage", leverage.toString())
+        // Recompute reserved margin on open trades to reflect the new leverage.
+        tradeMutex.withLock {
+            val open = db.tradeDao().getOpenTrades()
+            for (t in open) {
+                val m = TradingMath.requiredMarginUsd(t.symbol, t.lots, t.entryPrice, leverage, _priceState.value)
+                db.tradeDao().update(t.copy(marginUsd = m))
+            }
+        }
+        recomputeAccount()
+    }
+
+    suspend fun setStopoutLevel(value: Double) {
+        stopoutLevel = value.coerceAtLeast(0.0)
+        saveSetting("account_stopout_level", stopoutLevel.toString())
+    }
+
+    suspend fun deleteTrade(id: Int) {
+        tradeMutex.withLock { db.tradeDao().deleteById(id) }
+    }
+
+    suspend fun resetTradingData() {
+        tradeMutex.withLock {
+            db.tradeDao().deleteAll()
+            db.pendingOrderDao().deleteAll()
+            db.accountTransactionDao().deleteAll()
+            accountBalance = 0.0
+            saveSetting("account_balance", "0.0")
+            logEvent("TRADE", null, "Trading data reset: all trades, orders and transactions cleared.")
+        }
+        _liveTradePnl.value = emptyMap()
+        recomputeAccount()
+    }
+
+    private fun fmtLots(lots: Double): String = if (lots == lots.toLong().toDouble()) lots.toLong().toString() else String.format(Locale.US, "%.2f", lots)
+    private fun fmtUsd(amount: Double): String {
+        val sign = if (amount < 0) "-" else if (amount > 0) "+" else ""
+        return "$sign$" + String.format(Locale.US, "%,.2f", kotlin.math.abs(amount))
+    }
+    private fun closeLabel(by: String): String = when (by) {
+        "TP" -> "Take-Profit Hit"; "SL" -> "Stop-Loss Hit"; "STOPOUT" -> "Stop-Out"; else -> "Position Closed"
+    }
+
+    private fun fireTradeAlert(title: String, body: String) {
+        if (!tradeAlertsEnabled) return
+        NotificationHelper.fireTradeNotification(appContext, title, body, tradeAlertSoundMode, cachedTtsLanguage)
+    }
+
+    // CSV export builders for the trade ledger and the cash transaction history.
+    suspend fun buildTradeLedgerCsv(): String {
+        val offset = getSetting("display_timezone_offset")
+        val trades = db.tradeDao().getAllTradesForExport()
+        return buildString {
+            append("Trade ID,Symbol,Side,Lots,Entry,Exit,SL,TP,Open Time,Close Time,PNL (USD),Status,Closed By\n")
+            trades.forEach { t ->
+                val open = com.example.data.time.TimeFormat.format(t.openTime, offset)
+                val close = t.closeTime?.let { com.example.data.time.TimeFormat.format(it, offset) } ?: ""
+                append("${t.id},${t.symbol},${t.side},${t.lots},${t.entryPrice},${t.exitPrice ?: ""},${t.stopLoss ?: ""},${t.takeProfit ?: ""},\"$open\",\"$close\",${String.format(Locale.US, "%.2f", t.realizedPnl)},${t.status},${t.closedBy ?: ""}\n")
+            }
+        }
+    }
+
+    suspend fun buildTransactionsCsv(): String {
+        val offset = getSetting("display_timezone_offset")
+        val txns = db.accountTransactionDao().getAllForExport()
+        return buildString {
+            append("ID,Type,Amount (USD),Balance After,Note,Related Trade,Time\n")
+            txns.forEach { x ->
+                val time = com.example.data.time.TimeFormat.format(x.timestamp, offset)
+                append("${x.id},${x.type},${String.format(Locale.US, "%.2f", x.amount)},${String.format(Locale.US, "%.2f", x.balanceAfter)},\"${x.note}\",${x.relatedTradeId ?: ""},\"$time\"\n")
+            }
+        }
+    }
+
     // Settings helpers
     suspend fun getSetting(key: String): String? {
         return db.appSettingDao().getSetting(key)?.value
@@ -885,11 +1786,15 @@ class PriceMonitorManager private constructor(context: Context) {
             isNativeModeEnabled = value == "true"
         } else if (key == "ui_price_update_interval_ms") {
             cachedPriceUpdateIntervalMs = value.toLongOrNull()?.coerceIn(100L, 10000L) ?: 500L
+        } else if (key == "trade_alerts_enabled") {
+            tradeAlertsEnabled = value == "true"
+        } else if (key == "trade_alert_sound_mode") {
+            tradeAlertSoundMode = value
         }
 
-        // Auto restart loop if API key or update interval shifts
-        if (key == "twelve_data_api_key" || key == "finnhub_api_key" ||
-            key == "alpha_vantage_api_key" || key == "active_price_provider") {
+        // Auto restart loop if API key, account config or update interval shifts
+        if (key.endsWith("_api_key") || key == "active_price_provider" ||
+            key == PriceProvider.OANDA_ACCOUNT_ID_KEY || key == PriceProvider.OANDA_ENVIRONMENT_KEY) {
             closeConnections("Provider or API key changed")
             _connectionStatus.value = "OFFLINE"
             startMonitoringLoop()
@@ -1108,6 +2013,9 @@ class PriceMonitorManager private constructor(context: Context) {
 
             // Dedicated asset worker thread evaluates threshold checklist/alerts
             evaluateAlerts(sym, prevPrice, newPrice)
+
+            // Virtual trading engine: fill orders, hit SL/TP, enforce margin, refresh live PNL.
+            evaluateTrades(sym, newPrice)
 
             val displayDecs = info.getDisplayDecimals()
             val netChange = newPrice - openPrice

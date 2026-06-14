@@ -144,6 +144,66 @@ object AlertSoundPlayer {
         }
     }
 
+    /**
+     * Lightweight sound playback for trade events. [mode] is one of "Both", "Tone", "TTS", "Silent".
+     * Reuses the alert tone/duration settings so trade sounds match the user's chosen tone.
+     */
+    fun playTradeSound(context: Context, textToSpeak: String, mode: String) {
+        if (mode == "Silent") return
+        handler.post {
+            try {
+                stopPlayback()
+                val playTts = mode == "Both" || mode == "TTS"
+                val playTone = mode == "Both" || mode == "Tone"
+
+                if (playTts) {
+                    initTts(context)
+                    if (isTtsReady) {
+                        tts?.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "TRADE_TTS")
+                    } else {
+                        tts = TextToSpeech(context.applicationContext) { status ->
+                            if (status == TextToSpeech.SUCCESS) {
+                                applyTtsLocale()
+                                tts?.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "TRADE_TTS")
+                            }
+                        }
+                    }
+                }
+
+                if (playTone) {
+                    val monitor = PriceMonitorManager.getInstance(context)
+                    val scope = CoroutineScope(Dispatchers.IO)
+                    scope.launch {
+                        val soundUriStr = monitor.getSetting("alert_sound_uri") ?: ""
+                        val durationSec = monitor.getSetting("alert_ring_duration_sec")?.toIntOrNull() ?: 3
+                        withContext(Dispatchers.Main) {
+                            val uri = if (soundUriStr.isNotEmpty()) Uri.parse(soundUriStr)
+                                else RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                            if (uri != null) {
+                                val ringtone = RingtoneManager.getRingtone(context.applicationContext, uri)
+                                if (ringtone != null) {
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                                        ringtone.audioAttributes = AudioAttributes.Builder()
+                                            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                            .build()
+                                    }
+                                    ringtone.play()
+                                    currentRingtone = ringtone
+                                    val runnable = Runnable { stopPlayback() }
+                                    stopRunnable = runnable
+                                    handler.postDelayed(runnable, durationSec * 1000L)
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AlertSoundPlayer", "Failed to play trade sound: ${e.message}")
+            }
+        }
+    }
+
     fun stopPlayback() {
         try {
             stopRunnable?.let {

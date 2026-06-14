@@ -115,6 +115,15 @@ fun SettingsScreen(
     val activeProvider by viewModel.activeProvider.collectAsState()
     val finnhubApiKey by viewModel.finnhubApiKey.collectAsState()
     val alphaVantageApiKey by viewModel.alphaVantageApiKey.collectAsState()
+    val traderMadeApiKey by viewModel.traderMadeApiKey.collectAsState()
+    val oandaApiKey by viewModel.oandaApiKey.collectAsState()
+    val oandaAccountId by viewModel.oandaAccountId.collectAsState()
+    val oandaEnvironment by viewModel.oandaEnvironment.collectAsState()
+    val allTickApiKey by viewModel.allTickApiKey.collectAsState()
+    val polygonApiKey by viewModel.polygonApiKey.collectAsState()
+    val timezoneOffset by viewModel.timezoneOffset.collectAsState()
+    val tradeAlertsEnabled by viewModel.tradeAlertsEnabled.collectAsState()
+    val tradeAlertSoundMode by viewModel.tradeAlertSoundMode.collectAsState()
     val ttsLanguage by viewModel.ttsLanguage.collectAsState()
     val updateInterval by viewModel.priceUpdateIntervalMs.collectAsState()
     val websocketUseNativeMode by viewModel.websocketUseNativeMode.collectAsState()
@@ -210,6 +219,7 @@ fun SettingsScreen(
 
     var showSoundSourceDialog by remember { mutableStateOf(false) }
     var billingExpanded by remember { mutableStateOf(false) }
+    var tradingExpanded by remember { mutableStateOf(false) }
     var defaultsExpanded by remember { mutableStateOf(false) }
     var appearanceExpanded by remember { mutableStateOf(false) }
     var textualSizeExpanded by remember { mutableStateOf(false) }
@@ -376,6 +386,73 @@ fun SettingsScreen(
                                 }
                             }
                         }
+                        PriceProvider.TRADERMADE -> {
+                            OutlinedTextField(
+                                value = traderMadeApiKey,
+                                onValueChange = { viewModel.saveTraderMadeApiKey(it) },
+                                label = { Text("TraderMade API Key") },
+                                placeholder = { Text("e.g. your_tradermade_key") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("Streaming WebSocket feed. Start a free 14-day socket trial at tradermade.com", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        PriceProvider.OANDA_V20 -> {
+                            OutlinedTextField(
+                                value = oandaApiKey,
+                                onValueChange = { viewModel.saveOandaApiKey(it) },
+                                label = { Text("OANDA API Token") },
+                                placeholder = { Text("Bearer token from your OANDA account") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = oandaAccountId,
+                                onValueChange = { viewModel.saveOandaAccountId(it) },
+                                label = { Text("OANDA Account ID") },
+                                placeholder = { Text("e.g. 101-001-1234567-001") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            val envOptions = listOf("practice", "live")
+                            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                                envOptions.forEachIndexed { index, env ->
+                                    SegmentedButton(
+                                        selected = oandaEnvironment == env,
+                                        onClick = { viewModel.saveOandaEnvironment(env) },
+                                        shape = SegmentedButtonDefaults.itemShape(index, envOptions.size)
+                                    ) { Text(env.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelMedium) }
+                                }
+                            }
+                            Text("Free demo (practice) account available at oanda.com. HTTP streaming feed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        PriceProvider.ALLTICK -> {
+                            OutlinedTextField(
+                                value = allTickApiKey,
+                                onValueChange = { viewModel.saveAllTickApiKey(it) },
+                                label = { Text("AllTick Token") },
+                                placeholder = { Text("e.g. your_alltick_token") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("Free tier streams up to 5 symbols on one connection. Get a token at alltick.co", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        PriceProvider.POLYGON -> {
+                            OutlinedTextField(
+                                value = polygonApiKey,
+                                onValueChange = { viewModel.savePolygonApiKey(it) },
+                                label = { Text("Polygon.io API Key") },
+                                placeholder = { Text("e.g. your_polygon_key") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("Forex WebSocket (FX pairs only, no metals). Real-time needs a paid Currencies plan; free = delayed/EOD. polygon.io", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -480,6 +557,83 @@ fun SettingsScreen(
                     SettingRow(title = "Auto-Start on Boot", subtitle = "Restores the tracker automatically after reboot") {
                         Switch(checked = autoStart, onCheckedChange = { viewModel.saveAutoStartOnBoot(it) })
                     }
+                }
+            }
+        }
+
+        // ── I-b: Trading, Time & Trade Alerts ─────────────────────────────────
+        item {
+            SettingsGroupHeader(
+                "Trading & Time",
+                Icons.Default.Schedule,
+                tradingExpanded
+            ) { tradingExpanded = !tradingExpanded }
+
+            AnimatedVisibility(visible = tradingExpanded) {
+                SettingCard {
+                    SectionLabel("DISPLAY TIMEZONE")
+                    var tzInput by remember(timezoneOffset) { mutableStateOf(timezoneOffset) }
+                    var tzError by remember { mutableStateOf(false) }
+                    Text(
+                        "Watch clock & all trade timestamps use this timezone. Enter a UTC offset like \"+5:30\", \"-4\" or \"0\". Defaults to UTC.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        OutlinedTextField(
+                            value = tzInput,
+                            onValueChange = { tzInput = it; tzError = false },
+                            label = { Text("UTC offset") },
+                            placeholder = { Text("+5:30") },
+                            isError = tzError,
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(onClick = {
+                            tzError = !viewModel.saveTimezoneOffset(tzInput)
+                        }, shape = MaterialTheme.shapes.small) { Text("Save") }
+                    }
+                    if (tzError) {
+                        Text("Invalid offset. Use formats like +5:30, -4, 0 or UTC.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    } else {
+                        Text("Current: $timezoneOffset", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    SectionLabel("TRADE EVENT ALERTS")
+                    SettingRow(
+                        title = "Trade Notifications",
+                        subtitle = "Order fills, SL/TP hits, closures, stop-out & margin events"
+                    ) {
+                        Switch(checked = tradeAlertsEnabled, onCheckedChange = { viewModel.saveTradeAlertsEnabled(it) })
+                    }
+
+                    Text("Trade Alert Sound", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    val tradeModes = listOf("Both" to "Tone + Voice", "Tone" to "Tone only", "TTS" to "Voice only", "Silent" to "Silent")
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        tradeModes.forEach { (value, label) ->
+                            val selected = tradeAlertSoundMode == value
+                            Surface(
+                                onClick = { viewModel.saveTradeAlertSoundMode(value) },
+                                shape = MaterialTheme.shapes.small,
+                                color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = tradeAlertsEnabled
+                            ) {
+                                Row(modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs), verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = selected, onClick = { viewModel.saveTradeAlertSoundMode(value) }, enabled = tradeAlertsEnabled)
+                                    Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = Spacing.xs))
+                                }
+                            }
+                        }
+                    }
+                    Text(
+                        "Position size uses standard lots (1.0 = 100k units FX, 100 oz gold, 5,000 oz silver). Balance & P/L are in USD with margin & leverage enforced. Manage funds and leverage in the Trade tab.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

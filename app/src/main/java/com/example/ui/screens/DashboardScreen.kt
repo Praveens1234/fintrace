@@ -122,11 +122,30 @@ fun DashboardScreen(
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
-                Text(
-                    text = "Real-time assets monitoring",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // Live watch clock in the user's configured timezone (defaults to UTC).
+                val tzOffset by viewModel.timezoneOffset.collectAsState()
+                var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        nowMs = System.currentTimeMillis()
+                        kotlinx.coroutines.delay(1000L)
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Schedule,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(Spacing.xxs))
+                    Text(
+                        text = "${com.example.data.time.TimeFormat.format(nowMs, tzOffset)}  ($tzOffset)",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             // Asset manager action — minimum 48dp touch target for accessibility

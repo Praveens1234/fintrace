@@ -30,6 +30,7 @@ object NotificationHelper {
     private const val ALERT_DEFAULT_CHANNEL_ID = "price_alert_default"
     private const val ALERT_ALARM_CHANNEL_ID = "price_alert_alarm"
     private const val STATUS_CHANNEL_ID = "app_status_alert"
+    private const val TRADE_CHANNEL_ID = "trade_events"
 
     const val FGS_NOTIFICATION_ID = 1001
     const val TICKER_NOTIFICATION_ID = 1002
@@ -105,7 +106,56 @@ object NotificationHelper {
                 vibrationPattern = longArrayOf(0, 100, 50, 100)
             }
             nm.createNotificationChannel(statusChannel)
+
+            // 6. Trade Event Alerts
+            val tradeChannel = NotificationChannel(
+                TRADE_CHANNEL_ID,
+                "Trade Event Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notifies when orders fill, stop-loss/take-profit hit, positions close or margin events occur"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 200, 100, 200)
+            }
+            nm.createNotificationChannel(tradeChannel)
         }
+    }
+
+    // ── TRADE EVENT NOTIFICATIONS ─────────────────────────────────────────
+    fun fireTradeNotification(
+        context: Context,
+        title: String,
+        body: String,
+        soundMode: String,
+        ttsLanguage: String
+    ) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val intent = Intent(context, MainActivity::class.java).apply {
+            putExtra("OPEN_TRADE_TAB", true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val notifId = ((System.currentTimeMillis() % 100000L).toInt()) + 40000
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notifId,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notification = NotificationCompat.Builder(context, TRADE_CHANNEL_ID)
+            .setContentTitle("FinTrace · $title")
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setSubText("TRADE")
+            .setSmallIcon(android.R.drawable.ic_menu_sort_by_size)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        nm.notify(notifId, notification)
+        if (soundMode != "Silent") triggerDeviceHaptic(context, "HIGH")
+        AlertSoundPlayer.playTradeSound(context, "$title. $body", soundMode)
     }
 
     // ── FOREGROUND SERVICE PERSISTENT NOTIFICATION ────────────────────────

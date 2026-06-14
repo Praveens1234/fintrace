@@ -156,6 +156,7 @@ class MainActivity : ComponentActivity() {
                                             )
                                             val tabs = listOf(
                                                 Triple("prices", Icons.Default.TrendingUp, "Prices"),
+                                                Triple("trade", Icons.Default.ShowChart, "Trade"),
                                                 Triple("alerts", Icons.Default.Notifications, "Alerts"),
                                                 Triple("logs", Icons.Default.History, "Logs"),
                                                 Triple("settings", Icons.Default.Settings, "Settings")
@@ -197,6 +198,10 @@ class MainActivity : ComponentActivity() {
                                                             currentTab = "alerts"
                                                         }
                                                     )
+                                                }
+
+                                                "trade" -> {
+                                                    TradeScreen(viewModel = viewModel)
                                                 }
 
                                                 "alerts" -> {

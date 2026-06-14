@@ -65,6 +65,81 @@ data class PriceTick(
     val openPrice: Double? = null
 )
 
+// ---------------------------------------------------------------------------
+// Virtual Trading System entities
+// ---------------------------------------------------------------------------
+
+/**
+ * An open or closed position. The primary key [id] is the Trade ID surfaced to the user.
+ * A trade may originate from a market order (created directly) or from a filled pending order
+ * (in which case [originOrderId] links back to the PendingOrder).
+ */
+@Entity(tableName = "trades")
+data class Trade(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val symbol: String,
+    val side: String,            // "LONG" | "SHORT"
+    val lots: Double,            // position size in standard lots
+    val entryPrice: Double,
+    val exitPrice: Double? = null,
+    val stopLoss: Double? = null,
+    val takeProfit: Double? = null,
+    val openTime: Long = System.currentTimeMillis(),
+    val closeTime: Long? = null,
+    val realizedPnl: Double = 0.0, // booked USD PNL (incl. partial closes) once realized
+    val status: String = "OPEN",   // "OPEN" | "CLOSED"
+    val closedBy: String? = null,  // "USER" | "SL" | "TP" | "STOPOUT"
+    val originOrderId: Int? = null,
+    val marginUsd: Double = 0.0    // USD margin reserved for the (current) lot size
+)
+
+/**
+ * A resting Limit/Stop order. The primary key [id] is the Order ID surfaced to the user.
+ * When the order fills it produces a Trade ([resultingTradeId]) and is marked FILLED.
+ */
+@Entity(tableName = "pending_orders")
+data class PendingOrder(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val symbol: String,
+    val side: String,            // "LONG" | "SHORT"
+    val orderKind: String,       // "LIMIT" | "STOP"
+    val lots: Double,
+    val targetPrice: Double,     // entry trigger price
+    val stopLoss: Double? = null,
+    val takeProfit: Double? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val executedAt: Long? = null,
+    val status: String = "PENDING", // "PENDING" | "FILLED" | "CANCELLED"
+    val closedBy: String? = null,   // "USER" | "OTHER"
+    val resultingTradeId: Int? = null
+)
+
+/**
+ * A ledger entry for cash movements: deposits, withdrawals and realized PNL bookings.
+ * [balanceAfter] is the running realized cash balance after this transaction.
+ */
+@Entity(tableName = "account_transactions")
+data class AccountTransaction(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val type: String,            // "DEPOSIT" | "WITHDRAW" | "REALIZED_PNL" | "ADJUSTMENT"
+    val amount: Double,          // signed USD
+    val balanceAfter: Double,
+    val note: String = "",
+    val relatedTradeId: Int? = null,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+/** Live, in-memory account aggregation (never persisted; recomputed each tick). */
+data class AccountSnapshot(
+    val balance: Double = 0.0,       // realized cash
+    val equity: Double = 0.0,        // balance + unrealized PNL
+    val usedMargin: Double = 0.0,
+    val freeMargin: Double = 0.0,
+    val marginLevel: Double = 0.0,   // equity / usedMargin * 100 (0 when no margin used)
+    val unrealizedPnl: Double = 0.0,
+    val openPositions: Int = 0
+)
+
 data class SymbolInfo(
     val symbol: String,
     val name: String,
