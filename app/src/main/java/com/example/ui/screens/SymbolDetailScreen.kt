@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,7 +37,8 @@ import java.text.DecimalFormat
 fun SymbolDetailScreen(
     symbol: String,
     viewModel: MainViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onQuickTrade: ((String) -> Unit)? = null
 ) {
     val info = SymbolInfo.find(symbol)
     val priceState by viewModel.priceState.collectAsState()
@@ -44,6 +46,7 @@ fun SymbolDetailScreen(
 
     val alerts by viewModel.alertList.collectAsState()
     val targetAlerts = alerts.filter { it.symbol == symbol }
+    val marketOpen by viewModel.marketOpen.collectAsState()
 
     var showQuickCreate by remember { mutableStateOf(false) }
     var editingAlert by remember { mutableStateOf<Alert?>(null) }
@@ -324,6 +327,25 @@ fun SymbolDetailScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            item {
+                if (onQuickTrade != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Button(
+                        onClick = { onQuickTrade.invoke(symbol) },
+                        enabled = marketOpen,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Icon(Icons.Default.ShowChart, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = if (marketOpen) "Quick Trade $symbol" else "Market Closed",
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }

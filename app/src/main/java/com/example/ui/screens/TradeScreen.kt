@@ -66,7 +66,11 @@ private fun px(symbol: String, value: Double?): String =
     value?.formatPriceDynamic(SymbolInfo.find(symbol).getDisplayDecimals()) ?: "—"
 
 @Composable
-fun TradeScreen(viewModel: MainViewModel) {
+fun TradeScreen(
+    viewModel: MainViewModel,
+    initialTradeSymbol: String? = null,
+    onConsumeInitialSymbol: () -> Unit = {}
+) {
     val context = LocalContext.current
 
     val snapshot by viewModel.accountSnapshot.collectAsState()
@@ -79,6 +83,7 @@ fun TradeScreen(viewModel: MainViewModel) {
     val activeSymbols by viewModel.activeSymbols.collectAsState()
     val leverage by viewModel.accountLeverage.collectAsState()
     val tradeMessage by viewModel.tradeMessage.collectAsState()
+    val marketOpen by viewModel.marketOpen.collectAsState()
 
     LaunchedEffect(tradeMessage) {
         tradeMessage?.let {
@@ -90,6 +95,14 @@ fun TradeScreen(viewModel: MainViewModel) {
     var subTab by remember { mutableStateOf("Positions") }
     var showTicket by remember { mutableStateOf(false) }
     var ticketSymbol by remember { mutableStateOf(activeSymbols.firstOrNull() ?: "EUR/USD") }
+
+    LaunchedEffect(initialTradeSymbol) {
+        if (initialTradeSymbol != null) {
+            ticketSymbol = initialTradeSymbol
+            showTicket = true
+            onConsumeInitialSymbol()
+        }
+    }
     var modifyTradeTarget by remember { mutableStateOf<Trade?>(null) }
     var modifyOrderTarget by remember { mutableStateOf<PendingOrder?>(null) }
     var partialTarget by remember { mutableStateOf<Trade?>(null) }
@@ -159,6 +172,7 @@ fun TradeScreen(viewModel: MainViewModel) {
             activeSymbols = activeSymbols,
             priceMap = priceMap,
             leverage = leverage,
+            marketOpen = marketOpen,
             onDismiss = { showTicket = false },
             onSubmit = { sym, side, type, lots, entry, sl, tp ->
                 if (type == "Market") viewModel.placeMarketOrder(sym, side, lots, entry, sl, tp)
@@ -169,14 +183,14 @@ fun TradeScreen(viewModel: MainViewModel) {
     }
 
     modifyTradeTarget?.let { t ->
-        ModifyTradeDialog(t, onDismiss = { modifyTradeTarget = null }) { sl, tp, entry ->
+        ModifyTradeDialog(t, marketOpen = marketOpen, onDismiss = { modifyTradeTarget = null }) { sl, tp, entry ->
             viewModel.modifyTrade(t.id, sl, tp, entry)
             modifyTradeTarget = null
         }
     }
 
     modifyOrderTarget?.let { o ->
-        ModifyOrderDialog(o, onDismiss = { modifyOrderTarget = null }) { target, lots, sl, tp ->
+        ModifyOrderDialog(o, marketOpen = marketOpen, onDismiss = { modifyOrderTarget = null }) { target, lots, sl, tp ->
             viewModel.modifyPendingOrder(o.id, target, lots, sl, tp)
             modifyOrderTarget = null
         }
@@ -586,6 +600,7 @@ private fun OrderTicketDialog(
     activeSymbols: List<String>,
     priceMap: Map<String, PriceTick>,
     leverage: Double,
+    marketOpen: Boolean,
     onDismiss: () -> Unit,
     onSubmit: (symbol: String, side: String, type: String, lots: Double, entry: Double, sl: Double?, tp: Double?) -> Unit
 ) {
@@ -615,6 +630,23 @@ private fun OrderTicketDialog(
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
                 Text("New Order", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+
+                if (!marketOpen) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                        shape = RoundedCornerShape(Radius.sm),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(Spacing.sm),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                        ) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                            Text("Market closed — trading unavailable", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
 
                 // Symbol picker
                 Box {
@@ -686,6 +718,7 @@ private fun OrderTicketDialog(
                     Button(
                         onClick = { if (lots > 0 && entry > 0) onSubmit(symbol, side, orderType, lots, entry, sl, tp) },
                         modifier = Modifier.weight(1f),
+                        enabled = marketOpen && lots > 0 && entry > 0,
                         colors = ButtonDefaults.buttonColors(containerColor = if (side == "LONG") ProfitGreen else LossRed)
                     ) { Text(if (side == "LONG") "BUY" else "SELL") }
                 }
@@ -695,7 +728,7 @@ private fun OrderTicketDialog(
 }
 
 @Composable
-private fun ModifyTradeDialog(t: Trade, onDismiss: () -> Unit, onConfirm: (sl: Double?, tp: Double?, entry: Double?) -> Unit) {
+private fun ModifyTradeDialog(t: Trade, marketOpen: Boolean, onDismiss: () -> Unit, onConfirm: (sl: Double?, tp: Double?, entry: Double?) -> Unit) {
     var slTxt by remember { mutableStateOf(t.stopLoss?.let { px(t.symbol, it).replace(",", "") } ?: "") }
     var tpTxt by remember { mutableStateOf(t.takeProfit?.let { px(t.symbol, it).replace(",", "") } ?: "") }
     var entryTxt by remember { mutableStateOf(px(t.symbol, t.entryPrice).replace(",", "")) }
@@ -709,13 +742,13 @@ private fun ModifyTradeDialog(t: Trade, onDismiss: () -> Unit, onConfirm: (sl: D
                 OutlinedTextField(value = tpTxt, onValueChange = { tpTxt = it }, label = { Text("Take Profit") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
             }
         },
-        confirmButton = { Button(onClick = { onConfirm(slTxt.toDoubleOrNull(), tpTxt.toDoubleOrNull(), entryTxt.toDoubleOrNull()) }) { Text("Save") } },
+        confirmButton = { Button(onClick = { onConfirm(slTxt.toDoubleOrNull(), tpTxt.toDoubleOrNull(), entryTxt.toDoubleOrNull()) }, enabled = marketOpen) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
 @Composable
-private fun ModifyOrderDialog(o: PendingOrder, onDismiss: () -> Unit, onConfirm: (target: Double, lots: Double, sl: Double?, tp: Double?) -> Unit) {
+private fun ModifyOrderDialog(o: PendingOrder, marketOpen: Boolean, onDismiss: () -> Unit, onConfirm: (target: Double, lots: Double, sl: Double?, tp: Double?) -> Unit) {
     var targetTxt by remember { mutableStateOf(px(o.symbol, o.targetPrice).replace(",", "")) }
     var lotsTxt by remember { mutableStateOf(lotsStr(o.lots)) }
     var slTxt by remember { mutableStateOf(o.stopLoss?.let { px(o.symbol, it).replace(",", "") } ?: "") }
@@ -735,7 +768,7 @@ private fun ModifyOrderDialog(o: PendingOrder, onDismiss: () -> Unit, onConfirm:
             Button(onClick = {
                 val target = targetTxt.toDoubleOrNull(); val lots = lotsTxt.toDoubleOrNull()
                 if (target != null && lots != null) onConfirm(target, lots, slTxt.toDoubleOrNull(), tpTxt.toDoubleOrNull())
-            }) { Text("Save") }
+            }, enabled = marketOpen) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )

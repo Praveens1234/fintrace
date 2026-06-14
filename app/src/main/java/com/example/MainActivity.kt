@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
                 var currentRoute by remember { mutableStateOf("wizard_check") }
                 var currentTab by remember { mutableStateOf("prices") }
                 var selectedSymbolForDetail by remember { mutableStateOf("") }
+                var quickTradeSymbol by remember { mutableStateOf<String?>(null) }
 
                 // Check completed wizard setting
                 val states by viewModel.symbolStates.collectAsState()
@@ -201,7 +202,11 @@ class MainActivity : ComponentActivity() {
                                                 }
 
                                                 "trade" -> {
-                                                    TradeScreen(viewModel = viewModel)
+                                                    TradeScreen(
+                                                        viewModel = viewModel,
+                                                        initialTradeSymbol = quickTradeSymbol,
+                                                        onConsumeInitialSymbol = { quickTradeSymbol = null }
+                                                    )
                                                 }
 
                                                 "alerts" -> {
@@ -232,7 +237,12 @@ class MainActivity : ComponentActivity() {
                                 SymbolDetailScreen(
                                     symbol = selectedSymbolForDetail,
                                     viewModel = viewModel,
-                                    onBack = { currentRoute = "home" }
+                                    onBack = { currentRoute = "home" },
+                                    onQuickTrade = { sym ->
+                                        quickTradeSymbol = sym
+                                        currentRoute = "home"
+                                        currentTab = "trade"
+                                    }
                                 )
                             }
 
