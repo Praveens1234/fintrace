@@ -155,6 +155,11 @@ fun SettingsScreen(
     val alertRingDurationSec by viewModel.alertRingDurationSec.collectAsState()
     val alertSoundMode by viewModel.alertSoundMode.collectAsState()
 
+    val tradeAlertSoundUri by viewModel.tradeAlertSoundUri.collectAsState()
+    val tradeAlertSoundTitle by viewModel.tradeAlertSoundTitle.collectAsState()
+    val tradeAlertRingDurationSec by viewModel.tradeAlertRingDurationSec.collectAsState()
+    val tradeAlertTtsLanguage by viewModel.tradeAlertTtsLanguage.collectAsState()
+
     val prioritySoundUris by viewModel.prioritySoundUris.collectAsState()
     val prioritySoundTitles by viewModel.prioritySoundTitles.collectAsState()
     val priorityRingDurations by viewModel.priorityRingDurations.collectAsState()
@@ -225,6 +230,47 @@ fun SettingsScreen(
                     viewModel.savePrioritySoundUri(editingScopeForRingtone, uriStr)
                     viewModel.savePrioritySoundTitle(editingScopeForRingtone, title)
                 }
+            }
+        }
+    )
+
+    val tradeRingtonePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            @Suppress("DEPRECATION")
+            val uri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                result.data?.getParcelableExtra(android.media.RingtoneManager.EXTRA_RINGTONE_PICKED_URI, android.net.Uri::class.java)
+            } else {
+                result.data?.getParcelableExtra(android.media.RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            }
+            if (uri != null) {
+                viewModel.saveTradeAlertSoundUri(uri.toString())
+                val title = try {
+                    android.media.RingtoneManager.getRingtone(context, uri)?.getTitle(context) ?: "Custom Tone"
+                } catch (e: Exception) { "Custom Tone" }
+                viewModel.saveTradeAlertSoundTitle(title)
+            }
+        }
+    }
+
+    val tradeCustomFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+        onResult = { uri ->
+            if (uri != null) {
+                val uriStr = uri.toString()
+                var title = "Custom File"
+                try {
+                    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex != -1 && cursor.moveToFirst()) title = cursor.getString(nameIndex)
+                    }
+                } catch (e: Exception) { title = "Custom Audio" }
+                try {
+                    context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (_: Exception) {}
+                viewModel.saveTradeAlertSoundUri(uriStr)
+                viewModel.saveTradeAlertSoundTitle(title)
             }
         }
     )
@@ -703,6 +749,118 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SectionLabel("TRADE ALERT RINGTONE")
+
+                    SettingRow(
+                        title = "Trade Alert Tone",
+                        subtitle = tradeAlertSoundTitle.ifEmpty { "Default System Tone" }
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            if (tradeAlertSoundUri.isNotEmpty()) {
+                                IconButton(onClick = {
+                                    viewModel.saveTradeAlertSoundUri("")
+                                    viewModel.saveTradeAlertSoundTitle("Default System Tone")
+                                }) {
+                                    Icon(Icons.Default.Clear, contentDescription = "Clear tone", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            TextButton(onClick = {
+                                val intent = android.content.Intent(android.media.RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                                    putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_TYPE, android.media.RingtoneManager.TYPE_NOTIFICATION)
+                                    putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                                    if (tradeAlertSoundUri.isNotEmpty()) {
+                                        putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, android.net.Uri.parse(tradeAlertSoundUri))
+                                    }
+                                }
+                                tradeRingtonePickerLauncher.launch(intent)
+                            }) { Text("Pick Tone") }
+                            TextButton(onClick = { tradeCustomFilePickerLauncher.launch("audio/*") }) { Text("File…") }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SectionLabel("TRADE ALERT DURATION")
+
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.xs),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Duration: ${tradeAlertRingDurationSec}s",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Slider(
+                            value = tradeAlertRingDurationSec.toFloat(),
+                            onValueChange = { viewModel.saveTradeAlertRingDurationSec(it.toInt()) },
+                            valueRange = 1f..30f,
+                            steps = 28,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                        ) {
+                            listOf(3, 5, 10, 15).forEach { sec ->
+                                OutlinedButton(
+                                    onClick = { viewModel.saveTradeAlertRingDurationSec(sec) },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                                ) { Text("${sec}s", style = MaterialTheme.typography.labelSmall) }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SectionLabel("TRADE TTS LANGUAGE")
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        listOf("en-US" to "English", "hi-IN" to "हिन्दी").forEach { (tag, label) ->
+                            FilterChip(
+                                selected = tradeAlertTtsLanguage == tag,
+                                onClick = { viewModel.saveTradeAlertTtsLanguage(tag) },
+                                label = { Text(label, style = MaterialTheme.typography.bodySmall) }
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SectionLabel("TRADE ALERT DIAGNOSTIC")
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                com.example.service.AlertSoundPlayer.playTradeSound(
+                                    context,
+                                    "Trade alert test. Position closed with profit.",
+                                    "Tone"
+                                )
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Test Tone", style = MaterialTheme.typography.labelMedium) }
+                        OutlinedButton(
+                            onClick = {
+                                com.example.service.AlertSoundPlayer.playTradeSound(
+                                    context,
+                                    "Trade alert test. Position closed with profit.",
+                                    "TTS"
+                                )
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Test TTS", style = MaterialTheme.typography.labelMedium) }
+                    }
                 }
             }
         }

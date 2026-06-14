@@ -176,6 +176,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _tradeAlertSoundMode = MutableStateFlow("Both") // Both | Tone | TTS | Silent
     val tradeAlertSoundMode: StateFlow<String> = _tradeAlertSoundMode.asStateFlow()
 
+    private val _tradeAlertSoundUri = MutableStateFlow("")
+    val tradeAlertSoundUri: StateFlow<String> = _tradeAlertSoundUri.asStateFlow()
+
+    private val _tradeAlertSoundTitle = MutableStateFlow("Default System Tone")
+    val tradeAlertSoundTitle: StateFlow<String> = _tradeAlertSoundTitle.asStateFlow()
+
+    private val _tradeAlertRingDurationSec = MutableStateFlow(5)
+    val tradeAlertRingDurationSec: StateFlow<Int> = _tradeAlertRingDurationSec.asStateFlow()
+
+    private val _tradeAlertTtsLanguage = MutableStateFlow("en-US")
+    val tradeAlertTtsLanguage: StateFlow<String> = _tradeAlertTtsLanguage.asStateFlow()
+
     // Provider connection mode: "WEBSOCKET" or "REST"
     private val _providerConnectionMode = MutableStateFlow("WEBSOCKET")
     val providerConnectionMode: StateFlow<String> = _providerConnectionMode.asStateFlow()
@@ -288,6 +300,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _timezoneOffset.value = monitor.getSetting("display_timezone_offset") ?: "UTC"
             _tradeAlertsEnabled.value = (monitor.getSetting("trade_alerts_enabled") ?: "true") == "true"
             _tradeAlertSoundMode.value = monitor.getSetting("trade_alert_sound_mode") ?: "Both"
+            _tradeAlertSoundUri.value = monitor.getSetting("trade_alert_sound_uri") ?: ""
+            _tradeAlertSoundTitle.value = monitor.getSetting("trade_alert_sound_title") ?: "Default System Tone"
+            _tradeAlertRingDurationSec.value = monitor.getSetting("trade_alert_ring_duration_sec")?.toIntOrNull() ?: 5
+            _tradeAlertTtsLanguage.value = monitor.getSetting("trade_alert_tts_language") ?: "en-US"
             _accountLeverage.value = monitor.getLeverage()
             _accountStopout.value = monitor.getStopoutLevel()
             val ttsLang = monitor.getSetting("tts_language") ?: "en-US"
@@ -726,6 +742,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun saveTradeAlertSoundMode(mode: String) = viewModelScope.launch(Dispatchers.IO) {
         _tradeAlertSoundMode.value = mode; monitor.saveSetting("trade_alert_sound_mode", mode)
+    }
+
+    fun saveTradeAlertSoundUri(uri: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _tradeAlertSoundUri.value = uri
+            monitor.saveSetting("trade_alert_sound_uri", uri)
+        }
+    }
+
+    fun saveTradeAlertSoundTitle(title: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _tradeAlertSoundTitle.value = title
+            monitor.saveSetting("trade_alert_sound_title", title)
+        }
+    }
+
+    fun saveTradeAlertRingDurationSec(secs: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val validated = secs.coerceIn(1, 30)
+            _tradeAlertRingDurationSec.value = validated
+            monitor.saveSetting("trade_alert_ring_duration_sec", validated.toString())
+        }
+    }
+
+    fun saveTradeAlertTtsLanguage(lang: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _tradeAlertTtsLanguage.value = lang
+            monitor.saveSetting("trade_alert_tts_language", lang)
+        }
     }
 
     // ── VIRTUAL TRADING ACTIONS ───────────────────────────────────────────
