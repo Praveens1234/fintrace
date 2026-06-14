@@ -1,216 +1,121 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.data.model.AppLog
-import com.example.ui.theme.*
+import com.example.ui.theme.Radius
+import com.example.ui.theme.Spacing
 import com.example.viewmodel.MainViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.launch
 
+// ─── Filter chip definitions ─────────────────────────────────────────────────
+
+private data class FilterChip(val label: String, val types: Set<String>?)
+
+private val LOG_FILTERS = listOf(
+    FilterChip("All", null),
+    FilterChip("TICK", setOf("TICK")),
+    FilterChip("ALERT", setOf("ALERT_TRIGGER")),
+    FilterChip("INFO", setOf("INFO")),
+    FilterChip("ERROR", setOf("ERROR", "CRASH")),
+    FilterChip("SYSTEM", setOf("SYSTEM", "HEALING", "PROTECTION", "RECOVERY")),
+)
+
+// ─── Color helpers ────────────────────────────────────────────────────────────
+
+@Composable
+private fun borderColorForType(type: String): Color = when (type) {
+    "TICK" -> MaterialTheme.colorScheme.primary
+    "ALERT_TRIGGER" -> MaterialTheme.colorScheme.tertiary
+    "ERROR", "CRASH" -> MaterialTheme.colorScheme.error
+    "SYSTEM", "HEALING", "PROTECTION", "RECOVERY" -> MaterialTheme.colorScheme.secondary
+    else -> MaterialTheme.colorScheme.outlineVariant
+}
+
+@Composable
+private fun chipColorForType(type: String): Color = when (type) {
+    "TICK" -> MaterialTheme.colorScheme.primary
+    "ALERT_TRIGGER" -> MaterialTheme.colorScheme.tertiary
+    "ERROR", "CRASH" -> MaterialTheme.colorScheme.error
+    "SYSTEM", "HEALING", "PROTECTION", "RECOVERY" -> MaterialTheme.colorScheme.secondary
+    else -> MaterialTheme.colorScheme.outline
+}
+
+private fun labelForType(type: String): String = when (type) {
+    "TICK" -> "TICK"
+    "ALERT_TRIGGER" -> "ALERT"
+    "ERROR" -> "ERROR"
+    "CRASH" -> "CRASH"
+    "SYSTEM" -> "SYSTEM"
+    "HEALING" -> "HEAL"
+    "PROTECTION" -> "PROT"
+    "RECOVERY" -> "RECOV"
+    else -> "INFO"
+}
+
+// ─── Public composables ───────────────────────────────────────────────────────
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LogsScreen(
-    viewModel: MainViewModel
-) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Terminal,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "Diagnostic Terminal",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Black
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
-                )
-            )
-        }
-    ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .background(MaterialTheme.colorScheme.background)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-        ) {
-            TerminalContent(viewModel = viewModel)
-        }
-    }
-}
-
-@Composable
-fun LogsScreenDialog(
-    viewModel: MainViewModel,
-    onDismiss: () -> Unit
-) {
-    val isLight = (MaterialTheme.colorScheme.background.red + MaterialTheme.colorScheme.background.green + MaterialTheme.colorScheme.background.blue) > 1.5f
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.85f)
-                .padding(4.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = if (isLight) MaterialTheme.colorScheme.surface else Color(0xFF15181C),
-            tonalElevation = 8.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Terminal, 
-                        contentDescription = null, 
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Unified Diagnostic Terminal",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Black,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    )
-                }
-                
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f), thickness = 1.dp)
-                Spacer(modifier = Modifier.height(10.dp))
-                
-                Box(modifier = Modifier.weight(1f)) {
-                    TerminalContent(viewModel = viewModel)
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.testTag("terminal_dismiss_button")
-                    ) {
-                        Text(
-                            text = "Dismiss",
-                            style = MaterialTheme.typography.labelLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun TerminalContent(
-    viewModel: MainViewModel
-) {
+fun LogsScreen(viewModel: MainViewModel) {
     val logs by viewModel.allLogs.collectAsState()
-    val storage by viewModel.storageInfo.collectAsState()
-    
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val sdf = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+
     var selectedFilter by remember { mutableStateOf("All") }
     var searchQuery by remember { mutableStateOf("") }
-    val sdf = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
-    val clipboardManager = LocalClipboardManager.current
-    val context = androidx.compose.ui.platform.LocalContext.current
-
-    var showExportResultDialog by remember { mutableStateOf(false) }
-    var exportResultText by remember { mutableStateOf("") }
-    var exportType by remember { mutableStateOf("") }
+    var searchVisible by remember { mutableStateOf(false) }
+    var showClearDialog by remember { mutableStateOf(false) }
+    var exportMenuExpanded by remember { mutableStateOf(false) }
     var isExporting by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
 
-    var isToolsExpanded by remember { mutableStateOf(false) }
-
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val heartbeatAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "heartbeat"
-    )
+    // Holds the content to write when a SAF URI is available
+    var pendingExportContent by remember { mutableStateOf("") }
 
     val jsonExporter = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null) {
+            val content = pendingExportContent
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 try {
                     context.contentResolver.openOutputStream(uri)?.use { os ->
-                        os.write(exportResultText.toByteArray(Charsets.UTF_8))
+                        os.write(content.toByteArray(Charsets.UTF_8))
                     }
-                    scope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                        android.widget.Toast.makeText(context, "JSON exported and saved successfully!", android.widget.Toast.LENGTH_LONG).show()
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "JSON saved successfully", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
-                    scope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                        android.widget.Toast.makeText(context, "Failed to save JSON: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "Export failed: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -221,538 +126,281 @@ fun TerminalContent(
         contract = ActivityResultContracts.CreateDocument("text/csv")
     ) { uri ->
         if (uri != null) {
+            val content = pendingExportContent
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 try {
                     context.contentResolver.openOutputStream(uri)?.use { os ->
-                        os.write(exportResultText.toByteArray(Charsets.UTF_8))
+                        os.write(content.toByteArray(Charsets.UTF_8))
                     }
-                    scope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                        android.widget.Toast.makeText(context, "CSV exported and saved successfully!", android.widget.Toast.LENGTH_LONG).show()
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "CSV saved successfully", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
-                    scope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                        android.widget.Toast.makeText(context, "Failed to save CSV: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "Export failed: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
             }
         }
     }
 
-    LaunchedEffect(Unit) {
-        viewModel.updateStorageInfo()
+    fun buildJson(exportLogs: List<AppLog>): String {
+        val arr = org.json.JSONArray()
+        exportLogs.forEach { log ->
+            val obj = org.json.JSONObject()
+            obj.put("id", log.id)
+            obj.put("timestamp", log.timestamp)
+            obj.put("type", log.type)
+            obj.put("symbol", log.symbol ?: "")
+            obj.put("message", log.message)
+            arr.put(obj)
+        }
+        return arr.toString(2)
+    }
+
+    fun buildCsv(exportLogs: List<AppLog>): String = buildString {
+        append("id,timestamp,type,symbol,message\n")
+        exportLogs.forEach { log ->
+            val msg = log.message.replace("\"", "\"\"")
+            val sym = (log.symbol ?: "").replace("\"", "\"\"")
+            append("${log.id},${log.timestamp},${log.type},\"$sym\",\"$msg\"\n")
+        }
     }
 
     val filteredLogs = remember(logs, selectedFilter, searchQuery) {
+        val chipFilter = LOG_FILTERS.find { it.label == selectedFilter }
         logs.filter { log ->
-            val matchesFilter = when (selectedFilter) {
-                "Ticks" -> log.type == "TICK"
-                "Alerts" -> log.type == "ALERT_TRIGGER"
-                "Failures" -> log.type == "ERROR" || log.type == "CRASH"
-                "Heal / Protect" -> log.type == "HEALING" || log.type == "PROTECTION" || log.type == "RECOVERY" || log.type == "SYSTEM"
-                else -> true
-            }
-            val matchesQuery = if (searchQuery.isBlank()) {
-                true
-            } else {
+            val typeMatch = chipFilter?.types?.contains(log.type) ?: true
+            val queryMatch = searchQuery.isBlank() ||
                 log.message.contains(searchQuery, ignoreCase = true) ||
-                        (log.symbol?.contains(searchQuery, ignoreCase = true) == true)
-            }
-            matchesFilter && matchesQuery
+                (log.symbol?.contains(searchQuery, ignoreCase = true) == true)
+            typeMatch && queryMatch
         }
     }
 
-    val isLight = (MaterialTheme.colorScheme.background.red + MaterialTheme.colorScheme.background.green + MaterialTheme.colorScheme.background.blue) > 1.5f
-    val terminalColor = if (isLight) Color(0xFF00695C) else Color(0xFF00FFC2)
-    val consoleBg = if (isLight) Color(0xFFF1F3F5) else Color(0xFF050709)
+    // Count per chip
+    val countPerFilter = remember(logs) {
+        LOG_FILTERS.associateWith { chip ->
+            if (chip.types == null) logs.size
+            else logs.count { chip.types.contains(it.type) }
+        }
+    }
 
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        // High quality telemetry register header with blinking live heart-beat dot
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(terminalColor.copy(alpha = 0.1f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Terminal,
-                            contentDescription = null,
-                            tint = terminalColor,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Box(
-                                modifier = Modifier
-                                    .size(7.dp)
-                                    .clip(RoundedCornerShape(3.5.dp))
-                                    .background(terminalColor.copy(alpha = heartbeatAlpha))
+    // Auto-scroll to top when new entries arrive — only when already at top
+    val listState = rememberLazyListState()
+    val prevSize = remember { mutableIntStateOf(filteredLogs.size) }
+    LaunchedEffect(filteredLogs.size) {
+        val isAtTop = listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
+        if (filteredLogs.size > prevSize.intValue && isAtTop) {
+            listState.animateScrollToItem(0)
+        }
+        prevSize.intValue = filteredLogs.size
+    }
+
+    Scaffold(
+        topBar = {
+            Column {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                text = "Logs",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "TRACER TERMINAL ACTIVE",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = 1.sp
-                                ),
-                                color = terminalColor
+                                text = "${logs.size} entries",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Text(
-                            text = "Live background diagnostics diagnostics",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                        )
-                    }
-                }
+                    },
+                    actions = {
+                        // Search toggle
+                        IconButton(onClick = {
+                            searchVisible = !searchVisible
+                            if (!searchVisible) searchQuery = ""
+                        }) {
+                            Icon(
+                                imageVector = if (searchVisible) Icons.Default.SearchOff else Icons.Default.Search,
+                                contentDescription = if (searchVisible) "Close search" else "Search logs"
+                            )
+                        }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    IconButton(
-                        onClick = { viewModel.clearAllLogs() },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteSweep,
-                            contentDescription = "Clear All Logs",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-        }
+                        // Export dropdown
+                        Box {
+                            IconButton(
+                                onClick = { exportMenuExpanded = true },
+                                enabled = !isExporting
+                            ) {
+                                Icon(Icons.Default.FileDownload, contentDescription = "Export logs")
+                            }
+                            DropdownMenu(
+                                expanded = exportMenuExpanded,
+                                onDismissRequest = { exportMenuExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Export as JSON") },
+                                    leadingIcon = { Icon(Icons.Default.Code, contentDescription = null) },
+                                    onClick = {
+                                        exportMenuExpanded = false
+                                        scope.launch {
+                                            isExporting = true
+                                            val exportLogs = viewModel.getAllLogsForExport()
+                                            pendingExportContent = buildJson(exportLogs)
+                                            try {
+                                                jsonExporter.launch("fintrace_logs.json")
+                                            } catch (e: Exception) {
+                                                android.util.Log.e("LogsScreen", "JSON export error: ${e.message}")
+                                            }
+                                            isExporting = false
+                                        }
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Export as CSV") },
+                                    leadingIcon = { Icon(Icons.Default.TableChart, contentDescription = null) },
+                                    onClick = {
+                                        exportMenuExpanded = false
+                                        scope.launch {
+                                            isExporting = true
+                                            val exportLogs = viewModel.getAllLogsForExport()
+                                            pendingExportContent = buildCsv(exportLogs)
+                                            try {
+                                                csvExporter.launch("fintrace_logs.csv")
+                                            } catch (e: Exception) {
+                                                android.util.Log.e("LogsScreen", "CSV export error: ${e.message}")
+                                            }
+                                            isExporting = false
+                                        }
+                                    }
+                                )
+                            }
+                        }
 
-        // Search Bar Redesign mimicking a modern console shell prompt
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            placeholder = { 
-                Text(
-                    "filter-query: run logs parser filter...", 
-                    fontSize = 12.sp, 
-                    fontFamily = PriceTextFontFamily,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                ) 
-            },
-            prefix = {
-                Text(
-                    "$ ", 
-                    fontSize = 12.sp, 
-                    fontFamily = PriceTextFontFamily,
-                    fontWeight = FontWeight.Bold,
-                    color = terminalColor
-                )
-            },
-            trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { searchQuery = "" }) {
-                        Icon(Icons.Default.Clear, contentDescription = "Clear search", modifier = Modifier.size(16.dp))
-                    }
-                }
-            },
-            shape = RoundedCornerShape(10.dp),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().testTag("log_search_input"),
-            textStyle = androidx.compose.ui.text.TextStyle(fontFamily = PriceTextFontFamily, fontSize = 12.sp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = terminalColor,
-                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
-                unfocusedContainerColor = if (isLight) MaterialTheme.colorScheme.surface else Color(0xFF0C0F12),
-                focusedContainerColor = if (isLight) MaterialTheme.colorScheme.surface else Color(0xFF0F1216)
-            )
-        )
-
-        // Filter pills row - Shell styled categories
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            listOf("All", "Ticks", "Alerts", "Failures", "Heal / Protect").forEach { category ->
-                val isSelected = selectedFilter == category
-                val containerColor = if (isSelected) {
-                    terminalColor
-                } else {
-                    if (isLight) Color(0xFFF1F3F5) else Color(0xFF101317)
-                }
-                val labelColor = if (isSelected) {
-                    if (isLight) Color.White else Color.Black
-                } else {
-                    if (isLight) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f) else Color(0xFF90A4AE)
-                }
-                val borderStroke = if (isSelected) {
-                    null
-                } else {
-                    BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                }
-
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(containerColor)
-                        .then(if (borderStroke != null) Modifier.border(borderStroke, RoundedCornerShape(8.dp)) else Modifier)
-                        .clickable { selectedFilter = category }
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                        .testTag("log_filter_${category.lowercase().replace(" ", "_").replace("/", "")}"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = category.uppercase(),
-                        fontSize = 10.sp,
-                        fontFamily = PriceTextFontFamily,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 0.5.sp,
-                        color = labelColor
+                        // Clear with confirmation
+                        IconButton(onClick = { showClearDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteSweep,
+                                contentDescription = "Clear logs",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface
                     )
-                }
-            }
-        }
+                )
 
-        // Collapse or Modular System Utilities Accordion Panel
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (isLight) Color.White else Color(0xFF101317)
-            ),
-            border = BorderStroke(1.dp, if (isToolsExpanded) terminalColor.copy(alpha = 0.25f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
-        ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                // Header section of tools
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { isToolsExpanded = !isToolsExpanded }
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                // Collapsible search bar
+                AnimatedVisibility(
+                    visible = searchVisible,
+                    enter = expandVertically(),
+                    exit = shrinkVertically()
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SettingsAccessibility,
-                            contentDescription = null,
-                            tint = if (isToolsExpanded) terminalColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "SYSTEM TOOLS & AUDIT DIAL",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isToolsExpanded) terminalColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-                        )
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "${String.format("%.1f", (1f - storage.usedPercent) * 100f)}% DISK FREE",
-                            fontSize = 10.sp,
-                            fontFamily = PriceTextFontFamily,
-                            fontWeight = FontWeight.Black,
-                            color = if (storage.usedPercent > 0.8f) MaterialTheme.colorScheme.error else terminalColor
-                        )
-                        Icon(
-                            imageVector = if (isToolsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = "Expand collapsible section",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-
-                // Expanded diagnostics panel details
-                AnimatedVisibility(visible = isToolsExpanded) {
-                    Column(
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Search by message or symbol…") },
+                        leadingIcon = {
+                            Icon(Icons.Default.Search, contentDescription = null)
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Default.Clear, contentDescription = "Clear")
+                                }
+                            }
+                        },
+                        singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                            .padding(horizontal = Spacing.md, vertical = Spacing.xs)
+                            .testTag("log_search_input"),
+                        shape = MaterialTheme.shapes.medium
+                    )
+                }
 
-                        // Progress Audit indicators
-                        Column {
-                            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    text = "DISK REGISTERS OVERHEAD: ${String.format("%.3f", storage.usedMB)} MB / 10.00 MB",
-                                    fontSize = 10.sp,
-                                    fontFamily = PriceTextFontFamily,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "${String.format("%.2f", storage.remainingMB)} MB left",
-                                    fontSize = 10.sp,
-                                    fontFamily = PriceTextFontFamily,
-                                    color = terminalColor
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            LinearProgressIndicator(
-                                progress = { storage.usedPercent },
-                                color = if (storage.usedPercent > 0.8f) MaterialTheme.colorScheme.error else terminalColor,
-                                trackColor = if (isLight) MaterialTheme.colorScheme.surfaceVariant else Color(0xFF1E232A),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                                    .clip(RoundedCornerShape(3.dp))
-                            )
-                        }
-
-                        // Share Export buttons
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        isExporting = true
-                                        val allLogsForExport = viewModel.getAllLogsForExport()
-                                        val json = try {
-                                            val arr = org.json.JSONArray()
-                                            allLogsForExport.forEach { log ->
-                                                val obj = org.json.JSONObject()
-                                                obj.put("id", log.id)
-                                                obj.put("timestamp", log.timestamp)
-                                                obj.put("type", log.type)
-                                                obj.put("symbol", log.symbol ?: "")
-                                                obj.put("message", log.message)
-                                                arr.put(obj)
-                                            }
-                                            arr.toString(2)
-                                        } catch (e: Exception) {
-                                            "[]"
-                                        }
-                                        exportResultText = json
-                                        exportType = "JSON"
-                                        clipboardManager.setText(AnnotatedString(json))
-                                        shareExportedFile(context, "fintrace_diagnostic_logs.json", json, true)
-                                        try {
-                                            jsonExporter.launch("fintrace_diagnostic_logs.json")
-                                        } catch (ex: Exception) {
-                                            android.util.Log.e("LogsScreen", "SAF export launch error: ${ex.message}")
-                                        }
-                                        showExportResultDialog = true
-                                        isExporting = false
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isLight) Color(0xFF455A64) else Color(0xFF263238),
-                                    contentColor = Color.White
-                                ),
-                                modifier = Modifier.weight(1f).height(38.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                enabled = !isExporting
-                            ) {
-                                Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Export JSON", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        isExporting = true
-                                        val allLogsForExport = viewModel.getAllLogsForExport()
-                                        val csv = buildString {
-                                            append("ID,Timestamp,Type,Symbol,Message\n")
-                                            allLogsForExport.forEach { log ->
-                                                val cleanMsg = log.message.replace("\"", "\"\"")
-                                                val cleanSymbol = (log.symbol ?: "").replace("\"", "\"\"")
-                                                append("${log.id},${log.timestamp},${log.type},\"$cleanSymbol\",\"$cleanMsg\"\n")
-                                            }
-                                        }
-                                        exportResultText = csv
-                                        exportType = "CSV"
-                                        clipboardManager.setText(AnnotatedString(csv))
-                                        shareExportedFile(context, "fintrace_diagnostic_logs.csv", csv, false)
-                                        try {
-                                            csvExporter.launch("fintrace_diagnostic_logs.csv")
-                                        } catch (ex: Exception) {
-                                            android.util.Log.e("LogsScreen", "SAF export launch error: ${ex.message}")
-                                        }
-                                        showExportResultDialog = true
-                                        isExporting = false
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isLight) Color(0xFF455A64) else Color(0xFF263238),
-                                    contentColor = Color.White
-                                ),
-                                modifier = Modifier.weight(1f).height(38.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                enabled = !isExporting
-                            ) {
-                                Icon(Icons.Default.TableChart, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Export CSV", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        // Simulated test crash panel triggers
-                        Button(
-                            onClick = {
-                                throw RuntimeException("FinTrace User-Triggered Diagnostic Stress Test Crash")
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isLight) Color(0xFFFFEBEE) else Color(0xFF2A0D10),
-                                contentColor = if (isLight) Color(0xFFC62828) else Color(0xFFFF8A80)
-                            ),
-                            modifier = Modifier.fillMaxWidth().height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, if (isLight) Color(0xFFFFCDD2) else Color(0xFF5A161C))
-                        ) {
-                            Icon(Icons.Default.BugReport, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Trigger Simulated Runtime Error", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
+                // Filter chips row
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = Spacing.md, vertical = Spacing.xs),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                ) {
+                    items(LOG_FILTERS) { chip ->
+                        val count = countPerFilter[chip] ?: 0
+                        val selected = selectedFilter == chip.label
+                        FilterChipItem(
+                            label = "${chip.label} ($count)",
+                            selected = selected,
+                            onClick = { selectedFilter = chip.label },
+                            testTag = "log_filter_${chip.label.lowercase()}"
+                        )
                     }
                 }
+
+                HorizontalDivider()
             }
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
+    ) { paddingValues ->
 
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "active-records: ${filteredLogs.size}",
-                fontSize = 11.sp,
-                fontFamily = PriceTextFontFamily,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-            )
-            Text(
-                text = "AUTO_ROTATING_LOGGER",
-                fontSize = 11.sp,
-                fontFamily = PriceTextFontFamily,
-                color = terminalColor.copy(alpha = 0.75f),
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        // Linux Workstation styled Console Terminal Frame
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(consoleBg)
-                .border(BorderStroke(1.dp, if (isLight) Color.LightGray else Color(0xFF1E2229)), RoundedCornerShape(12.dp))
-        ) {
-            // CLI Window top Bar
-            Row(
+        if (filteredLogs.isEmpty()) {
+            // Empty state
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .background(if (isLight) Color(0xFFE9ECEF) else Color(0xFF0F1216))
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
             ) {
-                // Colored circles dots (Window Controls)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
-                    Box(modifier = Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFFFF5F56)))
-                    Box(modifier = Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFFFFBD2E)))
-                    Box(modifier = Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF27C93F)))
-                }
-
-                Text(
-                    text = "fintrace_monitor://${selectedFilter.lowercase().replace(" ","_")}.log",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    fontFamily = PriceTextFontFamily,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Icon(
-                    imageVector = Icons.Default.Laptop,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                    modifier = Modifier.size(12.dp)
-                )
-            }
-
-            if (filteredLogs.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ReceiptLong,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                            modifier = Modifier.size(36.dp)
-                        )
-                        Text(
-                            text = "[SYSTEM STACK IS SILENT]\nNo log records matching filters in real time.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = PriceTextFontFamily,
-                            fontSize = 11.sp,
-                            textAlign = TextAlign.Center
-                        )
+                    Icon(
+                        imageVector = Icons.Default.ReceiptLong,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+                        modifier = Modifier.size(56.dp)
+                    )
+                    Text(
+                        text = if (searchQuery.isNotBlank() || selectedFilter != "All")
+                            "No logs match your filters"
+                        else
+                            "No logs yet",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                    if (searchQuery.isNotBlank() || selectedFilter != "All") {
+                        TextButton(onClick = {
+                            searchQuery = ""
+                            selectedFilter = "All"
+                        }) {
+                            Text("Clear filters")
+                        }
                     }
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    contentPadding = PaddingValues(bottom = 12.dp)
-                ) {
-                    itemsIndexed(
-                        items = filteredLogs,
-                        key = { _, item -> "${item.id}_${item.type}_${item.timestamp}" }
-                    ) { index, logItem ->
-                        LogRecordRow(
-                            log = logItem, 
-                            timeStr = sdf.format(Date(logItem.timestamp)),
-                            index = index
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentPadding = PaddingValues(bottom = Spacing.lg)
+            ) {
+                itemsIndexed(
+                    items = filteredLogs,
+                    key = { _, item -> "${item.id}_${item.timestamp}" }
+                ) { index, log ->
+                    LogRow(
+                        log = log,
+                        timeStr = sdf.format(Date(log.timestamp))
+                    )
+                    if (index < filteredLogs.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = (Spacing.md + 3.dp)),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
                         )
                     }
                 }
@@ -760,161 +408,188 @@ fun TerminalContent(
         }
     }
 
-    // EXPORT SUCCESS AND PREVIEW MODAL
-    if (showExportResultDialog) {
+    // Confirmation dialog for clear
+    if (showClearDialog) {
         AlertDialog(
-            onDismissRequest = { showExportResultDialog = false },
+            onDismissRequest = { showClearDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.DeleteSweep,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+            },
+            title = { Text("Clear all logs?") },
+            text = { Text("This will permanently delete all log entries. This action cannot be undone.") },
             confirmButton = {
-                TextButton(onClick = { showExportResultDialog = false }) { 
-                    Text("Dismiss", fontWeight = FontWeight.Bold) 
+                Button(
+                    onClick = {
+                        viewModel.clearAllLogs()
+                        showClearDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Clear")
                 }
             },
-            title = { Text("$exportType Diagnostic Export") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("The full audit trace was compiled successfully into a file, shared with the system, and copied to your clipboard! See preview below:", fontSize = 12.sp)
-                    OutlinedTextField(
-                        value = exportResultText,
-                        onValueChange = {},
-                        readOnly = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(150.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        textStyle = androidx.compose.ui.text.TextStyle(fontFamily = PriceTextFontFamily, fontSize = 9.sp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = if (isLight) MaterialTheme.colorScheme.surfaceVariant else Color(0xFF0B0D11),
-                            unfocusedContainerColor = if (isLight) MaterialTheme.colorScheme.surfaceVariant else Color(0xFF0B0D11),
-                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface
-                        )
-                    )
-                    Button(
-                        onClick = {
-                            clipboardManager.setText(AnnotatedString(exportResultText))
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Copy to Clipboard")
-                    }
+            dismissButton = {
+                TextButton(onClick = { showClearDialog = false }) {
+                    Text("Cancel")
                 }
             }
         )
     }
 }
 
+/**
+ * Variant for displaying inside a dialog (e.g. from another screen).
+ */
 @Composable
-fun LogRecordRow(log: AppLog, timeStr: String, index: Int) {
-    val isLight = (MaterialTheme.colorScheme.background.red + MaterialTheme.colorScheme.background.green + MaterialTheme.colorScheme.background.blue) > 1.5f
-
-    // Semantic accent per log type (live data is no longer simulated, so TICK == live).
-    val termColor = when (log.type) {
-        "TICK" -> if (isLight) Color(0xFF00796B) else Color(0xFF00E5C0)          // live ticks
-        "ALERT_TRIGGER" -> if (isLight) Color(0xFFD84315) else Color(0xFFFF6E40) // alert fired
-        "SYSTEM" -> if (isLight) Color(0xFFE65100) else Color(0xFFFFC400)        // system messages
-        "CRASH" -> if (isLight) Color(0xFFAD1457) else Color(0xFFFF5470)         // uncaught exceptions
-        "ERROR" -> if (isLight) Color(0xFFD84315) else Color(0xFFFF9100)         // recovered errors
-        "HEALING" -> if (isLight) Color(0xFF2E7D32) else Color(0xFF69F0AE)       // self-healing
-        "PROTECTION" -> if (isLight) Color(0xFF1565C0) else Color(0xFF00E5FF)    // storage protection
-        "RECOVERY" -> if (isLight) Color(0xFF6A1B9A) else Color(0xFFE040FB)      // session recovery
-        else -> if (isLight) Color(0xFF455A64) else Color(0xFF90A4AE)            // INFO / other
+fun LogsScreenDialog(
+    viewModel: MainViewModel,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.88f),
+            shape = MaterialTheme.shapes.large,
+            tonalElevation = 6.dp
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Logs",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    TextButton(onClick = onDismiss) {
+                        Text("Dismiss")
+                    }
+                }
+                HorizontalDivider()
+                Box(modifier = Modifier.weight(1f)) {
+                    LogsScreen(viewModel = viewModel)
+                }
+            }
+        }
     }
+}
 
-    val typePrefix = when (log.type) {
-        "TICK" -> "TICK"
-        "ALERT_TRIGGER" -> "ALERT"
-        "SYSTEM" -> "SYSTEM"
-        "CRASH" -> "CRASH"
-        "ERROR" -> "ERROR"
-        "HEALING" -> "HEAL"
-        "PROTECTION" -> "PROT"
-        "RECOVERY" -> "RECOV"
-        else -> "INFO"
-    }
+// ─── Internal composables ─────────────────────────────────────────────────────
 
-    val rowBg = if (index % 2 == 0) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f) else Color.Transparent
+@Composable
+private fun FilterChipItem(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    testTag: String
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+        modifier = Modifier.testTag(testTag)
+    )
+}
+
+@Composable
+private fun LogRow(log: AppLog, timeStr: String) {
+    var expanded by remember { mutableStateOf(false) }
+
+    val borderColor = borderColorForType(log.type)
+    val chipColor = chipColorForType(log.type)
+    val typeLabel = labelForType(log.type)
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(rowBg)
-            .padding(start = 0.dp, top = 4.dp, bottom = 4.dp, end = 6.dp),
+            .clickable { expanded = !expanded }
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(vertical = Spacing.sm),
         verticalAlignment = Alignment.Top
     ) {
-        // Colored accent bar keyed to the log type.
+        // Colored left border strip
         Box(
             modifier = Modifier
-                .padding(end = 8.dp)
+                .padding(start = Spacing.md)
                 .width(3.dp)
-                .height(28.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(termColor)
+                .heightIn(min = 40.dp)
+                .fillMaxHeight()
+                .background(
+                    color = borderColor,
+                    shape = MaterialTheme.shapes.extraSmall
+                )
         )
 
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Type pill
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(termColor.copy(alpha = 0.15f))
-                        .padding(horizontal = 8.dp, vertical = 1.dp)
-                ) {
-                    Text(
-                        text = typePrefix,
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                        fontWeight = FontWeight.ExtraBold,
-                        color = termColor
-                    )
-                }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = Spacing.sm, end = Spacing.md)
+        ) {
+            // Meta row: timestamp + type chip + symbol chip
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+            ) {
                 Text(
                     text = timeStr,
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = PriceTextFontFamily, fontSize = 10.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.alignByBaseline()
                 )
-                log.symbol?.let {
+
+                // Type chip
+                Surface(
+                    shape = MaterialTheme.shapes.extraSmall,
+                    color = chipColor.copy(alpha = 0.12f),
+                    modifier = Modifier.alignByBaseline()
+                ) {
                     Text(
-                        text = it,
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        text = typeLabel,
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = chipColor,
+                        modifier = Modifier.padding(horizontal = Spacing.xs, vertical = 2.dp)
                     )
                 }
+
+                // Symbol chip (only when non-null)
+                log.symbol?.let { sym ->
+                    Surface(
+                        shape = MaterialTheme.shapes.extraSmall,
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.alignByBaseline()
+                    ) {
+                        Text(
+                            text = sym,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = Spacing.xs, vertical = 2.dp)
+                        )
+                    }
+                }
             }
-            Spacer(modifier = Modifier.height(2.dp))
+
+            Spacer(modifier = Modifier.height(Spacing.xxs))
+
+            // Message — 3 lines collapsed, fully expanded on tap
             Text(
                 text = log.message,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = PriceTextFontFamily,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp
-                ),
-                color = if (isLight) MaterialTheme.colorScheme.onSurface else Color(0xFFDCDFE4)
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = if (expanded) Int.MAX_VALUE else 3,
+                overflow = TextOverflow.Ellipsis
             )
         }
-    }
-}
-
-fun shareExportedFile(context: android.content.Context, filename: String, content: String, isJson: Boolean) {
-    try {
-        val cacheFile = java.io.File(context.cacheDir, filename)
-        cacheFile.writeText(content)
-
-        val authority = "com.example.fintrace.fileprovider"
-        val fileUri = androidx.core.content.FileProvider.getUriForFile(context, authority, cacheFile)
-
-        val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-            type = if (isJson) "application/json" else "text/csv"
-            putExtra(android.content.Intent.EXTRA_STREAM, fileUri)
-            putExtra(android.content.Intent.EXTRA_SUBJECT, "FinTrace $filename")
-            putExtra(android.content.Intent.EXTRA_TEXT, "FinTrace system diagnostic logs exported format.")
-            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-
-        context.startActivity(android.content.Intent.createChooser(shareIntent, "Save or Send FinTrace Diagnostic logs..."))
-    } catch (e: Exception) {
-        android.util.Log.e("LogsScreen", "Failed to share/export file: ${e.message}", e)
-        android.widget.Toast.makeText(context, "Export error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
     }
 }
