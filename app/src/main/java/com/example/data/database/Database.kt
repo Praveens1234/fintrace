@@ -60,6 +60,9 @@ interface TriggerHistoryDao {
     @Query("SELECT * FROM trigger_history ORDER BY triggeredAt DESC")
     fun getAllHistoryFlow(): Flow<List<TriggerHistory>>
 
+    @Query("SELECT * FROM trigger_history ORDER BY triggeredAt DESC")
+    suspend fun getAllHistory(): List<TriggerHistory>
+
     @Query("SELECT * FROM trigger_history WHERE alertId = :alertId ORDER BY triggeredAt DESC")
     fun getHistoryForAlert(alertId: Int): Flow<List<TriggerHistory>>
 
@@ -95,6 +98,9 @@ interface AppSettingDao {
 
     @Query("SELECT * FROM app_settings WHERE `key` = :key")
     fun getSettingFlow(key: String): Flow<AppSetting?>
+
+    @Query("SELECT * FROM app_settings")
+    suspend fun getAll(): List<AppSetting>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSetting(setting: AppSetting)

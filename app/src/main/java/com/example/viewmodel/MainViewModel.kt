@@ -737,6 +737,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun buildTradeLedgerCsv(): String = monitor.buildTradeLedgerCsv()
     suspend fun buildTransactionsCsv(): String = monitor.buildTransactionsCsv()
+    suspend fun buildBackupJson(): String = withContext(Dispatchers.IO) { monitor.buildBackupJson() }
+    suspend fun restoreFromJson(json: String): String = withContext(Dispatchers.IO) { monitor.restoreFromJson(json) }
+    fun resetAllData() = viewModelScope.launch(Dispatchers.IO) { monitor.resetAllData() }
 
     /** Write [content] to the cache and launch a system share sheet via the app FileProvider. */
     suspend fun shareCsv(context: android.content.Context, filename: String, content: String) {

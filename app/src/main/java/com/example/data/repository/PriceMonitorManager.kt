@@ -1778,6 +1778,176 @@ class PriceMonitorManager private constructor(context: Context) {
         }
     }
 
+    suspend fun buildBackupJson(): String {
+        val allAlerts = db.alertDao().getAllAlerts()
+        val allHistory = try { db.triggerHistoryDao().getAllHistory() } catch (e: Exception) { emptyList() }
+        val allTrades = db.tradeDao().getAllTradesForExport()
+        val allOrders = db.pendingOrderDao().getAllOrdersForExport()
+        val allTxns = db.accountTransactionDao().getAllForExport()
+        val allSettings = db.appSettingDao().getAll()
+        val allLogs = db.appLogDao().getAllLogsForExport()
+
+        val obj = org.json.JSONObject()
+        obj.put("version", 1)
+        obj.put("exportedAt", java.time.Instant.now().toString())
+
+        obj.put("alerts", org.json.JSONArray().also { arr ->
+            allAlerts.forEach { a ->
+                arr.put(org.json.JSONObject().apply {
+                    put("symbol", a.symbol); put("condition", a.condition); put("targetPrice", a.targetPrice)
+                    put("title", a.title); put("message", a.message); put("isActive", a.isActive)
+                    put("isOneTime", a.isOneTime); put("priority", a.priority)
+                    put("cooldownDurationMs", a.cooldownDurationMs); put("colorTagIndex", a.colorTagIndex)
+                    a.expiry?.let { put("expiry", it) }
+                    a.cooldownUntil?.let { put("cooldownUntil", it) }
+                })
+            }
+        })
+
+        obj.put("triggerHistory", org.json.JSONArray().also { arr ->
+            allHistory.forEach { h ->
+                arr.put(org.json.JSONObject().apply {
+                    put("alertId", h.alertId); put("symbol", h.symbol)
+                    put("priceAtTrigger", h.priceAtTrigger); put("triggeredAt", h.triggeredAt)
+                    put("method", h.method)
+                })
+            }
+        })
+
+        obj.put("trades", org.json.JSONArray().also { arr ->
+            allTrades.forEach { t ->
+                arr.put(org.json.JSONObject().apply {
+                    put("symbol", t.symbol); put("side", t.side); put("lots", t.lots)
+                    put("entryPrice", t.entryPrice); put("openTime", t.openTime)
+                    put("status", t.status); put("realizedPnl", t.realizedPnl); put("marginUsd", t.marginUsd)
+                    t.exitPrice?.let { put("exitPrice", it) }
+                    t.stopLoss?.let { put("stopLoss", it) }
+                    t.takeProfit?.let { put("takeProfit", it) }
+                    t.closeTime?.let { put("closeTime", it) }
+                    t.closedBy?.let { put("closedBy", it) }
+                })
+            }
+        })
+
+        obj.put("pendingOrders", org.json.JSONArray().also { arr ->
+            allOrders.forEach { o ->
+                arr.put(org.json.JSONObject().apply {
+                    put("symbol", o.symbol); put("side", o.side); put("orderKind", o.orderKind)
+                    put("lots", o.lots); put("targetPrice", o.targetPrice); put("createdAt", o.createdAt)
+                    put("status", o.status)
+                    o.stopLoss?.let { put("stopLoss", it) }
+                    o.takeProfit?.let { put("takeProfit", it) }
+                })
+            }
+        })
+
+        obj.put("accountTransactions", org.json.JSONArray().also { arr ->
+            allTxns.forEach { x ->
+                arr.put(org.json.JSONObject().apply {
+                    put("type", x.type); put("amount", x.amount); put("balanceAfter", x.balanceAfter)
+                    put("note", x.note); put("timestamp", x.timestamp)
+                    x.relatedTradeId?.let { put("relatedTradeId", it) }
+                })
+            }
+        })
+
+        val settingsObj = org.json.JSONObject()
+        allSettings.forEach { s -> settingsObj.put(s.key, s.value) }
+        obj.put("settings", settingsObj)
+
+        obj.put("logs", org.json.JSONArray().also { arr ->
+            allLogs.forEach { l ->
+                arr.put(org.json.JSONObject().apply {
+                    put("timestamp", l.timestamp); put("type", l.type); put("message", l.message)
+                    l.symbol?.let { put("symbol", it) }
+                })
+            }
+        })
+
+        return obj.toString(2)
+    }
+
+    suspend fun restoreFromJson(json: String): String {
+        return try {
+            val obj = org.json.JSONObject(json)
+            if (obj.optInt("version", 0) < 1) return "Invalid backup file."
+
+            // Clear all
+            db.alertDao().deleteAllAlerts()
+            try { db.triggerHistoryDao().clearAllHistory() } catch (e: Exception) {}
+            db.tradeDao().deleteAll()
+            db.pendingOrderDao().deleteAll()
+            db.accountTransactionDao().deleteAll()
+            db.appSettingDao().clearSettings()
+            db.appLogDao().clearAllLogs()
+
+            var alertCount = 0
+            obj.optJSONArray("alerts")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val a = arr.getJSONObject(i)
+                    db.alertDao().insertAlert(com.example.data.model.Alert(
+                        symbol = a.getString("symbol"),
+                        condition = a.getString("condition"),
+                        targetPrice = a.getDouble("targetPrice"),
+                        title = a.getString("title"),
+                        message = a.getString("message"),
+                        isActive = a.getBoolean("isActive"),
+                        isOneTime = a.getBoolean("isOneTime"),
+                        priority = a.getString("priority"),
+                        cooldownDurationMs = a.optLong("cooldownDurationMs", 300000L),
+                        colorTagIndex = a.optInt("colorTagIndex", 0),
+                        expiry = if (a.has("expiry")) a.getLong("expiry") else null,
+                        cooldownUntil = if (a.has("cooldownUntil")) a.getLong("cooldownUntil") else null
+                    ))
+                    alertCount++
+                }
+            }
+
+            var tradeCount = 0
+            obj.optJSONArray("trades")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val t = arr.getJSONObject(i)
+                    db.tradeDao().insert(com.example.data.model.Trade(
+                        symbol = t.getString("symbol"),
+                        side = t.getString("side"),
+                        lots = t.getDouble("lots"),
+                        entryPrice = t.getDouble("entryPrice"),
+                        exitPrice = if (t.has("exitPrice")) t.getDouble("exitPrice") else null,
+                        stopLoss = if (t.has("stopLoss")) t.getDouble("stopLoss") else null,
+                        takeProfit = if (t.has("takeProfit")) t.getDouble("takeProfit") else null,
+                        openTime = t.getLong("openTime"),
+                        closeTime = if (t.has("closeTime")) t.getLong("closeTime") else null,
+                        realizedPnl = t.optDouble("realizedPnl", 0.0),
+                        status = t.getString("status"),
+                        closedBy = if (t.has("closedBy")) t.getString("closedBy") else null,
+                        marginUsd = t.optDouble("marginUsd", 0.0)
+                    ))
+                    tradeCount++
+                }
+            }
+
+            obj.optJSONObject("settings")?.let { sObj ->
+                sObj.keys().forEach { key ->
+                    db.appSettingDao().insertSetting(com.example.data.model.AppSetting(key, sObj.getString(key)))
+                }
+            }
+
+            "Restored $alertCount alerts, $tradeCount trades, and settings."
+        } catch (e: Exception) {
+            "Restore failed: ${e.message}"
+        }
+    }
+
+    suspend fun resetAllData() {
+        db.alertDao().deleteAllAlerts()
+        try { db.triggerHistoryDao().clearAllHistory() } catch (e: Exception) {}
+        db.tradeDao().deleteAll()
+        db.pendingOrderDao().deleteAll()
+        db.accountTransactionDao().deleteAll()
+        db.appSettingDao().clearSettings()
+        db.appLogDao().clearAllLogs()
+    }
+
     // Settings helpers
     suspend fun getSetting(key: String): String? {
         return db.appSettingDao().getSetting(key)?.value

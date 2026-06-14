@@ -1,6 +1,9 @@
 package com.example.ui.screens
 
 import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,6 +25,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -34,6 +38,9 @@ import com.example.ui.theme.ConnectionLive
 import com.example.ui.theme.Radius
 import com.example.ui.theme.Spacing
 import com.example.viewmodel.MainViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
@@ -152,10 +159,11 @@ fun SettingsScreen(
     var selectedScope by remember { mutableStateOf("Global") }
     var editingScopeForRingtone by remember { mutableStateOf("Global") }
 
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
-    val ringtonePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    val ringtonePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
         onResult = { result ->
             if (result.resultCode == android.app.Activity.RESULT_OK) {
                 @Suppress("DEPRECATION")
@@ -187,8 +195,8 @@ fun SettingsScreen(
         }
     )
 
-    val customFilePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+    val customFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
         onResult = { uri ->
             if (uri != null) {
                 val uriStr = uri.toString()
@@ -1147,6 +1155,115 @@ fun SettingsScreen(
                         Icon(Icons.Default.SettingsBackupRestore, null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(Spacing.xs))
                         Text("Restore Preference Defaults", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+
+        // ── V-b: Backup & Restore ─────────────────────────────────────────────
+        item {
+            var backupRestoreExpanded by remember { mutableStateOf(false) }
+
+            SettingsGroupHeader(
+                "Backup & Restore",
+                Icons.Default.CloudDone,
+                backupRestoreExpanded
+            ) { backupRestoreExpanded = !backupRestoreExpanded }
+
+            AnimatedVisibility(visible = backupRestoreExpanded) {
+                SettingCard {
+                    SectionLabel("FULL DATA BACKUP & RESTORE")
+
+                    var pendingRestoreJson by remember { mutableStateOf("") }
+                    var showRestoreDialog by remember { mutableStateOf(false) }
+                    var showResetDialog by remember { mutableStateOf(false) }
+
+                    val exportLauncher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.CreateDocument("application/json")
+                    ) { uri ->
+                        if (uri != null) scope.launch(Dispatchers.IO) {
+                            try {
+                                val json = viewModel.buildBackupJson()
+                                context.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+                                withContext(Dispatchers.Main) { Toast.makeText(context, "Backup exported successfully.", Toast.LENGTH_SHORT).show() }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) { Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_LONG).show() }
+                            }
+                        }
+                    }
+
+                    val importLauncher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.OpenDocument()
+                    ) { uri ->
+                        if (uri != null) scope.launch(Dispatchers.IO) {
+                            try {
+                                val content = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: ""
+                                withContext(Dispatchers.Main) { pendingRestoreJson = content; showRestoreDialog = true }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) { Toast.makeText(context, "Read failed: ${e.message}", Toast.LENGTH_LONG).show() }
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = { exportLauncher.launch("fintrace_backup.json") },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Export Backup")
+                    }
+
+                    OutlinedButton(
+                        onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Import / Restore")
+                    }
+
+                    TextButton(
+                        onClick = { showResetDialog = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Full Reset — Delete All Data")
+                    }
+
+                    if (showRestoreDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showRestoreDialog = false },
+                            title = { Text("Restore Backup?") },
+                            text = { Text("This will overwrite ALL current data (trades, alerts, API keys, logs, settings). This cannot be undone.") },
+                            confirmButton = {
+                                Button(onClick = {
+                                    showRestoreDialog = false
+                                    scope.launch(Dispatchers.IO) {
+                                        val result = viewModel.restoreFromJson(pendingRestoreJson)
+                                        withContext(Dispatchers.Main) { Toast.makeText(context, result, Toast.LENGTH_LONG).show() }
+                                    }
+                                }) { Text("Restore") }
+                            },
+                            dismissButton = { TextButton(onClick = { showRestoreDialog = false }) { Text("Cancel") } }
+                        )
+                    }
+
+                    if (showResetDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showResetDialog = false },
+                            title = { Text("Delete All Data?") },
+                            text = { Text("This permanently deletes all trades, orders, alerts, API keys, logs, and settings. There is no undo.") },
+                            confirmButton = {
+                                Button(
+                                    onClick = { viewModel.resetAllData(); showResetDialog = false },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                ) { Text("Delete Everything") }
+                            },
+                            dismissButton = { TextButton(onClick = { showResetDialog = false }) { Text("Cancel") } }
+                        )
                     }
                 }
             }
