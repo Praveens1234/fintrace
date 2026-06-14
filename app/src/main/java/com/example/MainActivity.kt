@@ -21,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.ui.animation.AnimSpec
 import com.example.ui.screens.*
 import com.example.ui.theme.FinTraceTheme
 import com.example.viewmodel.MainViewModel
@@ -43,6 +44,7 @@ class MainActivity : ComponentActivity() {
                 var currentRoute by remember { mutableStateOf("wizard_check") }
                 var currentTab by remember { mutableStateOf("prices") }
                 var selectedSymbolForDetail by remember { mutableStateOf("") }
+                var quickTradeSymbol by remember { mutableStateOf<String?>(null) }
 
                 // Check completed wizard setting
                 val states by viewModel.symbolStates.collectAsState()
@@ -109,8 +111,8 @@ class MainActivity : ComponentActivity() {
                                     exitTransition = fadeOut(tween(200))
                                 }
                                 else -> {
-                                    enterTransition = fadeIn(tween(240))
-                                    exitTransition = fadeOut(tween(160))
+                                    enterTransition = fadeIn(AnimSpec.FadeTween)
+                                    exitTransition = fadeOut(AnimSpec.FastFade)
                                 }
                             }
                             enterTransition togetherWith exitTransition
@@ -156,6 +158,7 @@ class MainActivity : ComponentActivity() {
                                             )
                                             val tabs = listOf(
                                                 Triple("prices", Icons.Default.TrendingUp, "Prices"),
+                                                Triple("trade", Icons.Default.ShowChart, "Trade"),
                                                 Triple("alerts", Icons.Default.Notifications, "Alerts"),
                                                 Triple("logs", Icons.Default.History, "Logs"),
                                                 Triple("settings", Icons.Default.Settings, "Settings")
@@ -180,7 +183,13 @@ class MainActivity : ComponentActivity() {
                                         AnimatedContent(
                                             targetState = currentTab,
                                             transitionSpec = {
-                                                fadeIn(tween(200)) togetherWith fadeOut(tween(150))
+                                                val fromIdx = AnimSpec.tabOrder.indexOf(initialState).coerceAtLeast(0)
+                                                val toIdx   = AnimSpec.tabOrder.indexOf(targetState).coerceAtLeast(0)
+                                                val dir = if (toIdx > fromIdx) 1 else -1
+                                                (slideInHorizontally(AnimSpec.TabSpring) { it / 4 * dir } +
+                                                    fadeIn(AnimSpec.FadeTween)) togetherWith
+                                                (slideOutHorizontally(AnimSpec.TabSpring) { -it / 8 * dir } +
+                                                    fadeOut(AnimSpec.FastFade))
                                             },
                                             label = "tab_anim"
                                         ) { tab ->
@@ -196,6 +205,14 @@ class MainActivity : ComponentActivity() {
                                                             selectedSymbolForDetail = sym
                                                             currentTab = "alerts"
                                                         }
+                                                    )
+                                                }
+
+                                                "trade" -> {
+                                                    TradeScreen(
+                                                        viewModel = viewModel,
+                                                        initialTradeSymbol = quickTradeSymbol,
+                                                        onConsumeInitialSymbol = { quickTradeSymbol = null }
                                                     )
                                                 }
 
@@ -227,7 +244,12 @@ class MainActivity : ComponentActivity() {
                                 SymbolDetailScreen(
                                     symbol = selectedSymbolForDetail,
                                     viewModel = viewModel,
-                                    onBack = { currentRoute = "home" }
+                                    onBack = { currentRoute = "home" },
+                                    onQuickTrade = { sym ->
+                                        quickTradeSymbol = sym
+                                        currentRoute = "home"
+                                        currentTab = "trade"
+                                    }
                                 )
                             }
 

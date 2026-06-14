@@ -143,8 +143,86 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _alphaVantageApiKey = MutableStateFlow("")
     val alphaVantageApiKey: StateFlow<String> = _alphaVantageApiKey.asStateFlow()
 
+    // New provider credentials
+    private val _traderMadeApiKey = MutableStateFlow("")
+    val traderMadeApiKey: StateFlow<String> = _traderMadeApiKey.asStateFlow()
+
+    private val _oandaApiKey = MutableStateFlow("")
+    val oandaApiKey: StateFlow<String> = _oandaApiKey.asStateFlow()
+
+    private val _oandaAccountId = MutableStateFlow("")
+    val oandaAccountId: StateFlow<String> = _oandaAccountId.asStateFlow()
+
+    private val _oandaEnvironment = MutableStateFlow("practice")
+    val oandaEnvironment: StateFlow<String> = _oandaEnvironment.asStateFlow()
+
+    private val _allTickApiKey = MutableStateFlow("")
+    val allTickApiKey: StateFlow<String> = _allTickApiKey.asStateFlow()
+
+    private val _polygonApiKey = MutableStateFlow("")
+    val polygonApiKey: StateFlow<String> = _polygonApiKey.asStateFlow()
+
     private val _ttsLanguage = MutableStateFlow("en-US")
     val ttsLanguage: StateFlow<String> = _ttsLanguage.asStateFlow()
+
+    // Display timezone offset free-text (e.g. "+5:30"); defaults to UTC.
+    private val _timezoneOffset = MutableStateFlow("UTC")
+    val timezoneOffset: StateFlow<String> = _timezoneOffset.asStateFlow()
+
+    // Trade event alert preferences
+    private val _tradeAlertsEnabled = MutableStateFlow(true)
+    val tradeAlertsEnabled: StateFlow<Boolean> = _tradeAlertsEnabled.asStateFlow()
+
+    private val _tradeAlertSoundMode = MutableStateFlow("Both") // Both | Tone | TTS | Silent
+    val tradeAlertSoundMode: StateFlow<String> = _tradeAlertSoundMode.asStateFlow()
+
+    private val _tradeAlertSoundUri = MutableStateFlow("")
+    val tradeAlertSoundUri: StateFlow<String> = _tradeAlertSoundUri.asStateFlow()
+
+    private val _tradeAlertSoundTitle = MutableStateFlow("Default System Tone")
+    val tradeAlertSoundTitle: StateFlow<String> = _tradeAlertSoundTitle.asStateFlow()
+
+    private val _tradeAlertRingDurationSec = MutableStateFlow(5)
+    val tradeAlertRingDurationSec: StateFlow<Int> = _tradeAlertRingDurationSec.asStateFlow()
+
+    private val _tradeAlertTtsLanguage = MutableStateFlow("en-US")
+    val tradeAlertTtsLanguage: StateFlow<String> = _tradeAlertTtsLanguage.asStateFlow()
+
+    // Provider connection mode: "WEBSOCKET" or "REST"
+    private val _providerConnectionMode = MutableStateFlow("WEBSOCKET")
+    val providerConnectionMode: StateFlow<String> = _providerConnectionMode.asStateFlow()
+
+    // REST polling interval in ms (default 2000ms = 2 seconds)
+    private val _restPollingIntervalMs = MutableStateFlow(2000L)
+    val restPollingIntervalMs: StateFlow<Long> = _restPollingIntervalMs.asStateFlow()
+
+    // ── VIRTUAL TRADING FLOWS ─────────────────────────────────────────────
+    val openTrades: StateFlow<List<com.example.data.model.Trade>> =
+        monitor.db.tradeDao().getOpenTradesFlow()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val closedTrades: StateFlow<List<com.example.data.model.Trade>> =
+        monitor.db.tradeDao().getClosedTradesFlow()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val pendingOrders: StateFlow<List<com.example.data.model.PendingOrder>> =
+        monitor.db.pendingOrderDao().getPendingOrdersFlow()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val transactions: StateFlow<List<com.example.data.model.AccountTransaction>> =
+        monitor.db.accountTransactionDao().getAllFlow()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val accountSnapshot: StateFlow<com.example.data.model.AccountSnapshot> = monitor.accountSnapshot
+    val liveTradePnl: StateFlow<Map<Int, Double>> = monitor.liveTradePnl
+    val tradeMessage: StateFlow<String?> = monitor.tradeMessage
+    fun consumeTradeMessage() = monitor.consumeTradeMessage()
+
+    private val _accountLeverage = MutableStateFlow(monitor.getLeverage())
+    val accountLeverage: StateFlow<Double> = _accountLeverage.asStateFlow()
+
+    private val _accountStopout = MutableStateFlow(monitor.getStopoutLevel())
+    val accountStopout: StateFlow<Double> = _accountStopout.asStateFlow()
 
     init {
         // Start background FGS automatically on launch
@@ -158,6 +236,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isEnvApiKeyActive.value = dbKey.isBlank() && !effectiveKey.isNullOrBlank()
             _priceUpdateIntervalMs.value = monitor.getUiPriceIntervalSetting()
             _websocketUseNativeMode.value = (monitor.getSetting("websocket_use_native_mode") ?: "true") == "true"
+            _providerConnectionMode.value = monitor.getSetting("provider_connection_mode") ?: "WEBSOCKET"
+            _restPollingIntervalMs.value = monitor.getSetting("rest_polling_interval_ms")?.toLongOrNull() ?: 2000L
             _dashboardCardStyle.value = monitor.getSetting("dashboard_card_style") ?: "Standard"
             _priceTextSize.value = monitor.getSetting("price_text_size")?.toFloatOrNull() ?: 0f
             _symbolIdTextSize.value = monitor.getSetting("symbol_id_text_size")?.toFloatOrNull() ?: 0f
@@ -211,6 +291,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _activeProvider.value = monitor.getSetting("active_price_provider") ?: PriceProvider.TWELVE_DATA.name
             _finnhubApiKey.value = monitor.getSetting("finnhub_api_key") ?: ""
             _alphaVantageApiKey.value = monitor.getSetting("alpha_vantage_api_key") ?: ""
+            _traderMadeApiKey.value = monitor.getSetting("tradermade_api_key") ?: ""
+            _oandaApiKey.value = monitor.getSetting("oanda_api_key") ?: ""
+            _oandaAccountId.value = monitor.getSetting(PriceProvider.OANDA_ACCOUNT_ID_KEY) ?: ""
+            _oandaEnvironment.value = monitor.getSetting(PriceProvider.OANDA_ENVIRONMENT_KEY) ?: "practice"
+            _allTickApiKey.value = monitor.getSetting("alltick_api_key") ?: ""
+            _polygonApiKey.value = monitor.getSetting("polygon_api_key") ?: ""
+            _timezoneOffset.value = monitor.getSetting("display_timezone_offset") ?: "UTC"
+            _tradeAlertsEnabled.value = (monitor.getSetting("trade_alerts_enabled") ?: "true") == "true"
+            _tradeAlertSoundMode.value = monitor.getSetting("trade_alert_sound_mode") ?: "Both"
+            _tradeAlertSoundUri.value = monitor.getSetting("trade_alert_sound_uri") ?: ""
+            _tradeAlertSoundTitle.value = monitor.getSetting("trade_alert_sound_title") ?: "Default System Tone"
+            _tradeAlertRingDurationSec.value = monitor.getSetting("trade_alert_ring_duration_sec")?.toIntOrNull() ?: 5
+            _tradeAlertTtsLanguage.value = monitor.getSetting("trade_alert_tts_language") ?: "en-US"
+            _accountLeverage.value = monitor.getLeverage()
+            _accountStopout.value = monitor.getStopoutLevel()
             val ttsLang = monitor.getSetting("tts_language") ?: "en-US"
             _ttsLanguage.value = ttsLang
             withContext(Dispatchers.Main) {
@@ -364,6 +459,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _websocketUseNativeMode.value = enabled
             monitor.saveSetting("websocket_use_native_mode", enabled.toString())
             monitor.logEvent("SYSTEM", null, "Updated Native Tick Streaming mode: $enabled")
+        }
+    }
+
+    fun saveProviderConnectionMode(mode: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _providerConnectionMode.value = mode
+            monitor.saveSetting("provider_connection_mode", mode)
+            monitor.logEvent("SYSTEM", null, "Provider connection mode changed to: $mode")
+            monitor.startMonitoringLoop()
+        }
+    }
+
+    fun saveRestPollingIntervalMs(ms: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val validated = ms.coerceIn(500L, 60000L)
+            _restPollingIntervalMs.value = validated
+            monitor.saveSetting("rest_polling_interval_ms", validated.toString())
         }
     }
 
@@ -593,6 +705,140 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             monitor.saveSetting(key, value)
         }
     }
+
+    // ── NEW PROVIDER CREDENTIALS ──────────────────────────────────────────
+    fun saveTraderMadeApiKey(key: String) = viewModelScope.launch(Dispatchers.IO) {
+        _traderMadeApiKey.value = key; monitor.saveSetting("tradermade_api_key", key)
+    }
+    fun saveOandaApiKey(key: String) = viewModelScope.launch(Dispatchers.IO) {
+        _oandaApiKey.value = key; monitor.saveSetting("oanda_api_key", key)
+    }
+    fun saveOandaAccountId(id: String) = viewModelScope.launch(Dispatchers.IO) {
+        _oandaAccountId.value = id; monitor.saveSetting(PriceProvider.OANDA_ACCOUNT_ID_KEY, id)
+    }
+    fun saveOandaEnvironment(env: String) = viewModelScope.launch(Dispatchers.IO) {
+        _oandaEnvironment.value = env; monitor.saveSetting(PriceProvider.OANDA_ENVIRONMENT_KEY, env)
+    }
+    fun saveAllTickApiKey(key: String) = viewModelScope.launch(Dispatchers.IO) {
+        _allTickApiKey.value = key; monitor.saveSetting("alltick_api_key", key)
+    }
+    fun savePolygonApiKey(key: String) = viewModelScope.launch(Dispatchers.IO) {
+        _polygonApiKey.value = key; monitor.saveSetting("polygon_api_key", key)
+    }
+
+    // ── TIMEZONE & TRADE ALERT SETTINGS ───────────────────────────────────
+    /** Save a free-text UTC offset (e.g. "+5:30"). Returns false if the text is unparseable. */
+    fun saveTimezoneOffset(text: String): Boolean {
+        val parsed = com.example.data.time.TimeFormat.parseOffset(text)
+        if (parsed == null) return false
+        val label = com.example.data.time.TimeFormat.offsetLabel(parsed)
+        _timezoneOffset.value = label
+        viewModelScope.launch(Dispatchers.IO) { monitor.saveSetting("display_timezone_offset", label) }
+        return true
+    }
+
+    fun saveTradeAlertsEnabled(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        _tradeAlertsEnabled.value = enabled; monitor.saveSetting("trade_alerts_enabled", enabled.toString())
+    }
+    fun saveTradeAlertSoundMode(mode: String) = viewModelScope.launch(Dispatchers.IO) {
+        _tradeAlertSoundMode.value = mode; monitor.saveSetting("trade_alert_sound_mode", mode)
+    }
+
+    fun saveTradeAlertSoundUri(uri: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _tradeAlertSoundUri.value = uri
+            monitor.saveSetting("trade_alert_sound_uri", uri)
+        }
+    }
+
+    fun saveTradeAlertSoundTitle(title: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _tradeAlertSoundTitle.value = title
+            monitor.saveSetting("trade_alert_sound_title", title)
+        }
+    }
+
+    fun saveTradeAlertRingDurationSec(secs: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val validated = secs.coerceIn(1, 30)
+            _tradeAlertRingDurationSec.value = validated
+            monitor.saveSetting("trade_alert_ring_duration_sec", validated.toString())
+        }
+    }
+
+    fun saveTradeAlertTtsLanguage(lang: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _tradeAlertTtsLanguage.value = lang
+            monitor.saveSetting("trade_alert_tts_language", lang)
+        }
+    }
+
+    // ── VIRTUAL TRADING ACTIONS ───────────────────────────────────────────
+    fun placeMarketOrder(symbol: String, side: String, lots: Double, entryPrice: Double, sl: Double?, tp: Double?) =
+        viewModelScope.launch(Dispatchers.IO) { monitor.placeMarketOrder(symbol, side, lots, entryPrice, sl, tp) }
+
+    fun placePendingOrder(symbol: String, side: String, kind: String, lots: Double, targetPrice: Double, sl: Double?, tp: Double?) =
+        viewModelScope.launch(Dispatchers.IO) { monitor.placePendingOrder(symbol, side, kind, lots, targetPrice, sl, tp) }
+
+    fun modifyPendingOrder(id: Int, targetPrice: Double, lots: Double, sl: Double?, tp: Double?) =
+        viewModelScope.launch(Dispatchers.IO) { monitor.modifyPendingOrder(id, targetPrice, lots, sl, tp) }
+
+    fun cancelPendingOrder(id: Int) = viewModelScope.launch(Dispatchers.IO) { monitor.cancelPendingOrder(id) }
+
+    fun modifyTrade(id: Int, sl: Double?, tp: Double?, entry: Double?) =
+        viewModelScope.launch(Dispatchers.IO) { monitor.modifyTrade(id, sl, tp, entry) }
+
+    fun closeTrade(id: Int) = viewModelScope.launch(Dispatchers.IO) { monitor.closeTrade(id) }
+    fun partialCloseTrade(id: Int, lots: Double) = viewModelScope.launch(Dispatchers.IO) { monitor.partialCloseTrade(id, lots) }
+    fun closeAllTrades() = viewModelScope.launch(Dispatchers.IO) { monitor.closeAllTrades() }
+    fun closeAllProfitable() = viewModelScope.launch(Dispatchers.IO) { monitor.closeAllProfitable() }
+    fun closeAllLosing() = viewModelScope.launch(Dispatchers.IO) { monitor.closeAllLosing() }
+    fun cancelAllPending() = viewModelScope.launch(Dispatchers.IO) { monitor.cancelAllPending() }
+    fun deleteTrade(id: Int) = viewModelScope.launch(Dispatchers.IO) { monitor.deleteTrade(id) }
+
+    fun deposit(amount: Double) = viewModelScope.launch(Dispatchers.IO) { monitor.deposit(amount) }
+    fun withdraw(amount: Double) = viewModelScope.launch(Dispatchers.IO) { monitor.withdraw(amount) }
+
+    fun setLeverage(value: Double) = viewModelScope.launch(Dispatchers.IO) {
+        monitor.setLeverage(value); _accountLeverage.value = monitor.getLeverage()
+    }
+    fun setStopoutLevel(value: Double) = viewModelScope.launch(Dispatchers.IO) {
+        monitor.setStopoutLevel(value); _accountStopout.value = monitor.getStopoutLevel()
+    }
+    fun resetTradingData() = viewModelScope.launch(Dispatchers.IO) { monitor.resetTradingData() }
+
+    suspend fun buildTradeLedgerCsv(): String = monitor.buildTradeLedgerCsv()
+    suspend fun buildTransactionsCsv(): String = monitor.buildTransactionsCsv()
+    suspend fun buildBackupJson(): String = withContext(Dispatchers.IO) { monitor.buildBackupJson() }
+    suspend fun restoreFromJson(json: String): String = withContext(Dispatchers.IO) { monitor.restoreFromJson(json) }
+    fun resetAllData() = viewModelScope.launch(Dispatchers.IO) { monitor.resetAllData() }
+
+    /** Write [content] to the cache and launch a system share sheet via the app FileProvider. */
+    suspend fun shareCsv(context: android.content.Context, filename: String, content: String) {
+        try {
+            val cacheFile = java.io.File(context.cacheDir, filename)
+            cacheFile.writeText(content)
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context, "com.example.fintrace.fileprovider", cacheFile
+            )
+            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "text/csv"
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                putExtra(android.content.Intent.EXTRA_SUBJECT, "FinTrace $filename")
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            withContext(Dispatchers.Main) {
+                context.startActivity(android.content.Intent.createChooser(intent, "Share trade ledger").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MainViewModel", "shareCsv failed: ${e.message}")
+        }
+    }
+
+    /** Format an epoch timestamp using the configured display timezone. */
+    fun formatTime(epochMs: Long): String =
+        com.example.data.time.TimeFormat.format(epochMs, _timezoneOffset.value)
 
     fun importAlertsFromJson(jsonStr: String): Boolean {
         return try {

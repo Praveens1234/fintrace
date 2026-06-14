@@ -86,7 +86,7 @@ fun AboutAppScreen(onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.onBackground
             )
             Text(
-                text = "Version 1.0.0  ·  Stable Core Release",
+                text = "Version 2.0.0  ·  Professional Trading Edition",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary
@@ -131,14 +131,18 @@ fun AboutAppScreen(onBack: () -> Unit) {
                     }
                     
                     val features = listOf(
-                        Triple(Icons.Default.ShowChart, "Live Market Monitoring", "Real-time rates delivered via Twelve Data WebSocket or synthesized localized ticking simulations."),
-                        Triple(Icons.Default.Notifications, "Custom Price Alerts", "Highly customizable cross parameters triggering instant background sounds or alerts."),
-                        Triple(Icons.Default.VolumeUp, "Speech Notifications", "Full text-to-speech output reading the symbol and price changes automatically in background."),
-                        Triple(Icons.Default.Sync, "Background Monitoring", "A persistent background monitor service whitelisted from power optimization models."),
-                        Triple(Icons.Default.Restore, "Persistent Alert Recovery", "Automatic reloading of monitoring services on phone boots or crashes."),
-                        Triple(Icons.Default.Storage, "Offline Portfolio Saving", "Fully integrated Room database saving tracking metrics and records locally."),
-                        Triple(Icons.Default.Dashboard, "Asset Watchlists", "Intuitive layouts allowing traders to add, manage, and view target commodities."),
-                        Triple(Icons.Default.History, "Event Logging", "A complete historic record of alerts triggered, crashes captured, and service activity.")
+                        Triple(Icons.Default.TrendingUp, "Live Market Monitoring", "Real-time prices from 7 providers: Twelve Data, Finnhub, Alpha Vantage, TraderMade, OANDA v20, AllTick, Polygon.io — WebSocket and HTTP streaming."),
+                        Triple(Icons.Default.Notifications, "Smart Price Alerts", "Price-crossing alerts with LOW/MEDIUM/HIGH/CRITICAL priorities, one-time or repeating, cooldown timers, expiry, and per-priority sound modes."),
+                        Triple(Icons.Default.VolumeUp, "Rich Alert Notifications", "TTS voice readouts, alarm tones, vibration, and silent modes — configurable per alert priority. Persistent across Doze and restarts."),
+                        Triple(Icons.Default.ShowChart, "Virtual Trading System", "Full broker simulation: Market, Limit, and Stop orders with editable entry price (mirror real positions), SL/TP, partial close, and position modify."),
+                        Triple(Icons.Default.AccountBalance, "Margin & Leverage Engine", "Realistic margin model: configurable leverage (1:100 default), used/free margin, equity, margin level %, and auto stop-out protection."),
+                        Triple(Icons.Default.Receipt, "Trade Ledger & CSV Export", "Full history with Trade IDs, entry/exit, open/close timestamps, realized P/L, and CSV export + system share."),
+                        Triple(Icons.Default.Backup, "Backup & Restore", "Export all data (trades, alerts, API keys, settings, logs) as JSON and restore on any device."),
+                        Triple(Icons.Default.AccessTime, "Timezone Clock", "Configurable display timezone (any UTC offset e.g. +5:30) with live clock on the Prices screen."),
+                        Triple(Icons.Default.Sync, "Background Monitoring", "Persistent foreground service with WorkManager backstop — survives Doze, memory pressure, and reboots."),
+                        Triple(Icons.Default.Storage, "Local-First Database", "Room v3 on-device database — no cloud account, no data leaves the device."),
+                        Triple(Icons.Default.DarkMode, "AMOLED & Adaptive Theme", "Dark, AMOLED (true black), Light, and System-adaptive themes."),
+                        Triple(Icons.Default.History, "Diagnostic Logs", "Searchable, filterable log viewer — tick events, alert triggers, errors, and system messages.")
                     )
                     
                     features.forEach { (icon, title, desc) ->
@@ -219,12 +223,14 @@ fun AboutAppScreen(onBack: () -> Unit) {
                     }
                     
                     val stack = listOf(
-                        Pair("Kotlin JVM", "Strong, modern typesafe platform language of Android"),
-                        Pair("Jetpack Compose", "Fluid dynamic multi-state rendering UI system"),
-                        Pair("Room Database", "Safe SQLite persistence engine for fast reading feeds"),
-                        Pair("Foreground Service FGS", "Continuous ticking and active monitoring execution loops"),
-                        Pair("Android Notifications", "Status-drawer summary updates and alerts Dispatch"),
-                        Pair("TTS Speeches Framework", "Dynamic text-to-speech audio alert synthesizer")
+                        Pair("Kotlin 2.2 + Coroutines", "Modern async language with structured concurrency and StateFlow"),
+                        Pair("Jetpack Compose + Material 3", "Declarative UI with adaptive theming and smooth animations"),
+                        Pair("Room Database v3", "Type-safe SQLite persistence with migration support"),
+                        Pair("OkHttp WebSocket + HTTP", "Low-latency streaming for 7 price providers"),
+                        Pair("WorkManager 2.10", "Reliable background job scheduling and restart backstop"),
+                        Pair("Android FGS + WakeLock", "Foreground service surviving all battery states"),
+                        Pair("TTS + AudioManager", "Text-to-speech alerts with dynamic volume and tone playback"),
+                        Pair("FileProvider + SAF", "Secure file export and share via Storage Access Framework")
                     )
 
                     stack.forEach { (tech, desc) ->
@@ -331,18 +337,20 @@ fun AboutDeveloperScreen(onBack: () -> Unit) {
                     }
                     
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Constructed Using:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Antigravity Framework", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Text("App:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("FinTrace v2.0", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                     }
-                    
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Primary Copilot:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Gemini 3.5 Flash Model", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Text("Platform:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Android (Kotlin + Jetpack Compose)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                     }
-
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Workspace Native Code:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Jetpack Compose Core", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Text("Contact:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("praveens12346@gmail.com", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Copyright:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("© 2026 Praveen Kumar", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }

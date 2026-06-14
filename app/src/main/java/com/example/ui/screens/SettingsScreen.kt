@@ -1,6 +1,9 @@
 package com.example.ui.screens
 
 import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,6 +25,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -34,6 +38,11 @@ import com.example.ui.theme.ConnectionLive
 import com.example.ui.theme.Radius
 import com.example.ui.theme.Spacing
 import com.example.viewmodel.MainViewModel
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
@@ -115,9 +124,20 @@ fun SettingsScreen(
     val activeProvider by viewModel.activeProvider.collectAsState()
     val finnhubApiKey by viewModel.finnhubApiKey.collectAsState()
     val alphaVantageApiKey by viewModel.alphaVantageApiKey.collectAsState()
+    val traderMadeApiKey by viewModel.traderMadeApiKey.collectAsState()
+    val oandaApiKey by viewModel.oandaApiKey.collectAsState()
+    val oandaAccountId by viewModel.oandaAccountId.collectAsState()
+    val oandaEnvironment by viewModel.oandaEnvironment.collectAsState()
+    val allTickApiKey by viewModel.allTickApiKey.collectAsState()
+    val polygonApiKey by viewModel.polygonApiKey.collectAsState()
+    val timezoneOffset by viewModel.timezoneOffset.collectAsState()
+    val tradeAlertsEnabled by viewModel.tradeAlertsEnabled.collectAsState()
+    val tradeAlertSoundMode by viewModel.tradeAlertSoundMode.collectAsState()
     val ttsLanguage by viewModel.ttsLanguage.collectAsState()
     val updateInterval by viewModel.priceUpdateIntervalMs.collectAsState()
     val websocketUseNativeMode by viewModel.websocketUseNativeMode.collectAsState()
+    val providerConnectionMode by viewModel.providerConnectionMode.collectAsState()
+    val restPollingIntervalMs by viewModel.restPollingIntervalMs.collectAsState()
     val cardStyle by viewModel.dashboardCardStyle.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
     val hapticEnabled by viewModel.hapticFeedbackEnabled.collectAsState()
@@ -135,6 +155,11 @@ fun SettingsScreen(
     val alertRingDurationSec by viewModel.alertRingDurationSec.collectAsState()
     val alertSoundMode by viewModel.alertSoundMode.collectAsState()
 
+    val tradeAlertSoundUri by viewModel.tradeAlertSoundUri.collectAsState()
+    val tradeAlertSoundTitle by viewModel.tradeAlertSoundTitle.collectAsState()
+    val tradeAlertRingDurationSec by viewModel.tradeAlertRingDurationSec.collectAsState()
+    val tradeAlertTtsLanguage by viewModel.tradeAlertTtsLanguage.collectAsState()
+
     val prioritySoundUris by viewModel.prioritySoundUris.collectAsState()
     val prioritySoundTitles by viewModel.prioritySoundTitles.collectAsState()
     val priorityRingDurations by viewModel.priorityRingDurations.collectAsState()
@@ -143,10 +168,11 @@ fun SettingsScreen(
     var selectedScope by remember { mutableStateOf("Global") }
     var editingScopeForRingtone by remember { mutableStateOf("Global") }
 
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
-    val ringtonePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    val ringtonePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
         onResult = { result ->
             if (result.resultCode == android.app.Activity.RESULT_OK) {
                 @Suppress("DEPRECATION")
@@ -178,8 +204,8 @@ fun SettingsScreen(
         }
     )
 
-    val customFilePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+    val customFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
         onResult = { uri ->
             if (uri != null) {
                 val uriStr = uri.toString()
@@ -208,8 +234,51 @@ fun SettingsScreen(
         }
     )
 
+    val tradeRingtonePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            @Suppress("DEPRECATION")
+            val uri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                result.data?.getParcelableExtra(android.media.RingtoneManager.EXTRA_RINGTONE_PICKED_URI, android.net.Uri::class.java)
+            } else {
+                result.data?.getParcelableExtra(android.media.RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            }
+            if (uri != null) {
+                viewModel.saveTradeAlertSoundUri(uri.toString())
+                val title = try {
+                    android.media.RingtoneManager.getRingtone(context, uri)?.getTitle(context) ?: "Custom Tone"
+                } catch (e: Exception) { "Custom Tone" }
+                viewModel.saveTradeAlertSoundTitle(title)
+            }
+        }
+    }
+
+    val tradeCustomFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+        onResult = { uri ->
+            if (uri != null) {
+                val uriStr = uri.toString()
+                var title = "Custom File"
+                try {
+                    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex != -1 && cursor.moveToFirst()) title = cursor.getString(nameIndex)
+                    }
+                } catch (e: Exception) { title = "Custom Audio" }
+                try {
+                    context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (_: Exception) {}
+                viewModel.saveTradeAlertSoundUri(uriStr)
+                viewModel.saveTradeAlertSoundTitle(title)
+            }
+        }
+    )
+
+    var restIntervalInput by remember(restPollingIntervalMs) { mutableStateOf(restPollingIntervalMs.toString()) }
     var showSoundSourceDialog by remember { mutableStateOf(false) }
     var billingExpanded by remember { mutableStateOf(false) }
+    var tradingExpanded by remember { mutableStateOf(false) }
     var defaultsExpanded by remember { mutableStateOf(false) }
     var appearanceExpanded by remember { mutableStateOf(false) }
     var textualSizeExpanded by remember { mutableStateOf(false) }
@@ -376,7 +445,122 @@ fun SettingsScreen(
                                 }
                             }
                         }
+                        PriceProvider.TRADERMADE -> {
+                            OutlinedTextField(
+                                value = traderMadeApiKey,
+                                onValueChange = { viewModel.saveTraderMadeApiKey(it) },
+                                label = { Text("TraderMade API Key") },
+                                placeholder = { Text("e.g. your_tradermade_key") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("Streaming WebSocket feed. Start a free 14-day socket trial at tradermade.com", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        PriceProvider.OANDA_V20 -> {
+                            OutlinedTextField(
+                                value = oandaApiKey,
+                                onValueChange = { viewModel.saveOandaApiKey(it) },
+                                label = { Text("OANDA API Token") },
+                                placeholder = { Text("Bearer token from your OANDA account") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = oandaAccountId,
+                                onValueChange = { viewModel.saveOandaAccountId(it) },
+                                label = { Text("OANDA Account ID") },
+                                placeholder = { Text("e.g. 101-001-1234567-001") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            val envOptions = listOf("practice", "live")
+                            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                                envOptions.forEachIndexed { index, env ->
+                                    SegmentedButton(
+                                        selected = oandaEnvironment == env,
+                                        onClick = { viewModel.saveOandaEnvironment(env) },
+                                        shape = SegmentedButtonDefaults.itemShape(index, envOptions.size)
+                                    ) { Text(env.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelMedium) }
+                                }
+                            }
+                            Text("Free demo (practice) account available at oanda.com. HTTP streaming feed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        PriceProvider.ALLTICK -> {
+                            OutlinedTextField(
+                                value = allTickApiKey,
+                                onValueChange = { viewModel.saveAllTickApiKey(it) },
+                                label = { Text("AllTick Token") },
+                                placeholder = { Text("e.g. your_alltick_token") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("Free tier streams up to 5 symbols on one connection. Get a token at alltick.co", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        PriceProvider.POLYGON -> {
+                            OutlinedTextField(
+                                value = polygonApiKey,
+                                onValueChange = { viewModel.savePolygonApiKey(it) },
+                                label = { Text("Polygon.io API Key") },
+                                placeholder = { Text("e.g. your_polygon_key") },
+                                shape = MaterialTheme.shapes.small,
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("Forex WebSocket (FX pairs only, no metals). Real-time needs a paid Currencies plan; free = delayed/EOD. polygon.io", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
+
+                    // Only show connection mode toggle if provider supports both WS and REST
+                    if (selectedProvider.supportsRest && selectedProvider.supportsWebSocket) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        SectionLabel("CONNECTION MODE")
+
+                        val connModeOptions = listOf("WebSocket", "REST Polling")
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            connModeOptions.forEachIndexed { index, option ->
+                                val isWs = option == "WebSocket"
+                                SegmentedButton(
+                                    selected = if (isWs) providerConnectionMode == "WEBSOCKET" else providerConnectionMode == "REST",
+                                    onClick = { viewModel.saveProviderConnectionMode(if (isWs) "WEBSOCKET" else "REST") },
+                                    shape = SegmentedButtonDefaults.itemShape(index, connModeOptions.size)
+                                ) {
+                                    Text(option, style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                        }
+
+                        if (providerConnectionMode == "REST") {
+                            Spacer(modifier = Modifier.height(Spacing.sm))
+                            SettingRow(
+                                title = "REST Polling Interval",
+                                subtitle = "How often to query the REST API (500–60,000 ms)"
+                            ) {
+                                OutlinedTextField(
+                                    value = restIntervalInput,
+                                    onValueChange = { input ->
+                                        restIntervalInput = input
+                                        input.toLongOrNull()?.let { viewModel.saveRestPollingIntervalMs(it) }
+                                    },
+                                    suffix = { Text("ms") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.width(120.dp)
+                                )
+                            }
+                        }
+                    } else if (!selectedProvider.supportsRest) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Text(
+                            "WebSocket only — ${selectedProvider.displayName} does not offer a public REST API.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    // else: REST-only provider (Alpha Vantage, OANDA) — already handled by existing UI
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
@@ -391,7 +575,7 @@ fun SettingsScreen(
                                 onClick = { viewModel.saveWebsocketUseNativeMode(isNative) },
                                 shape = SegmentedButtonDefaults.itemShape(index, streamOptions.size),
                                 modifier = Modifier.testTag(if (isNative) "tick_mode_native_button" else "tick_mode_interval_button"),
-                                enabled = selectedProvider.supportsWebSocket
+                                enabled = selectedProvider.supportsWebSocket && providerConnectionMode == "WEBSOCKET"
                             ) {
                                 Text(option, style = MaterialTheme.typography.labelMedium)
                             }
@@ -401,6 +585,12 @@ fun SettingsScreen(
                     if (!selectedProvider.supportsWebSocket) {
                         Text(
                             "Stream sync mode is not applicable for REST polling providers.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    } else if (providerConnectionMode == "REST") {
+                        Text(
+                            "Stream sync mode is not applicable in REST polling mode.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
@@ -421,20 +611,22 @@ fun SettingsScreen(
                         }
                     }
 
+                    val wsAndNativeEnabled = selectedProvider.supportsWebSocket && providerConnectionMode == "WEBSOCKET" && !websocketUseNativeMode
                     SettingRow(
                         title = "Price Update Interval",
                         subtitle = if (!selectedProvider.supportsWebSocket) "N/A — REST polling uses fixed 13 s cadence"
+                                   else if (providerConnectionMode == "REST") "N/A — using REST polling mode"
                                    else if (websocketUseNativeMode) "Disable Native Mode to configure"
                                    else "Throttle latency: 100 ms – 10 s",
-                        enabled = selectedProvider.supportsWebSocket && !websocketUseNativeMode
+                        enabled = wsAndNativeEnabled
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.alpha(if (selectedProvider.supportsWebSocket && !websocketUseNativeMode) 1f else 0.38f)
+                            modifier = Modifier.alpha(if (wsAndNativeEnabled) 1f else 0.38f)
                         ) {
                             IconButton(
                                 onClick = { viewModel.savePriceUpdateInterval(updateInterval - 50) },
-                                enabled = selectedProvider.supportsWebSocket && !websocketUseNativeMode
+                                enabled = wsAndNativeEnabled
                             ) {
                                 Icon(Icons.Default.RemoveCircleOutline, null, modifier = Modifier.size(20.dp))
                             }
@@ -442,7 +634,7 @@ fun SettingsScreen(
                                 modifier = Modifier.widthIn(min = 64.dp), textAlign = TextAlign.Center)
                             IconButton(
                                 onClick = { viewModel.savePriceUpdateInterval(updateInterval + 50) },
-                                enabled = selectedProvider.supportsWebSocket && !websocketUseNativeMode
+                                enabled = wsAndNativeEnabled
                             ) {
                                 Icon(Icons.Default.AddCircleOutline, null, modifier = Modifier.size(20.dp))
                             }
@@ -479,6 +671,195 @@ fun SettingsScreen(
 
                     SettingRow(title = "Auto-Start on Boot", subtitle = "Restores the tracker automatically after reboot") {
                         Switch(checked = autoStart, onCheckedChange = { viewModel.saveAutoStartOnBoot(it) })
+                    }
+                }
+            }
+        }
+
+        // ── I-b: Trading, Time & Trade Alerts ─────────────────────────────────
+        item {
+            SettingsGroupHeader(
+                "Trading & Time",
+                Icons.Default.Schedule,
+                tradingExpanded
+            ) { tradingExpanded = !tradingExpanded }
+
+            AnimatedVisibility(visible = tradingExpanded) {
+                SettingCard {
+                    SectionLabel("DISPLAY TIMEZONE")
+                    var tzInput by remember(timezoneOffset) { mutableStateOf(timezoneOffset) }
+                    var tzError by remember { mutableStateOf(false) }
+                    Text(
+                        "Watch clock & all trade timestamps use this timezone. Enter a UTC offset like \"+5:30\", \"-4\" or \"0\". Defaults to UTC.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        OutlinedTextField(
+                            value = tzInput,
+                            onValueChange = { tzInput = it; tzError = false },
+                            label = { Text("UTC offset") },
+                            placeholder = { Text("+5:30") },
+                            isError = tzError,
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(onClick = {
+                            tzError = !viewModel.saveTimezoneOffset(tzInput)
+                        }, shape = MaterialTheme.shapes.small) { Text("Save") }
+                    }
+                    if (tzError) {
+                        Text("Invalid offset. Use formats like +5:30, -4, 0 or UTC.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    } else {
+                        Text("Current: $timezoneOffset", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    SectionLabel("TRADE EVENT ALERTS")
+                    SettingRow(
+                        title = "Trade Notifications",
+                        subtitle = "Order fills, SL/TP hits, closures, stop-out & margin events"
+                    ) {
+                        Switch(checked = tradeAlertsEnabled, onCheckedChange = { viewModel.saveTradeAlertsEnabled(it) })
+                    }
+
+                    Text("Trade Alert Sound", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    val tradeModes = listOf("Both" to "Tone + Voice", "Tone" to "Tone only", "TTS" to "Voice only", "Silent" to "Silent")
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        tradeModes.forEach { (value, label) ->
+                            val selected = tradeAlertSoundMode == value
+                            Surface(
+                                onClick = { viewModel.saveTradeAlertSoundMode(value) },
+                                shape = MaterialTheme.shapes.small,
+                                color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = tradeAlertsEnabled
+                            ) {
+                                Row(modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs), verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = selected, onClick = { viewModel.saveTradeAlertSoundMode(value) }, enabled = tradeAlertsEnabled)
+                                    Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = Spacing.xs))
+                                }
+                            }
+                        }
+                    }
+                    Text(
+                        "Position size uses standard lots (1.0 = 100k units FX, 100 oz gold, 5,000 oz silver). Balance & P/L are in USD with margin & leverage enforced. Manage funds and leverage in the Trade tab.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SectionLabel("TRADE ALERT RINGTONE")
+
+                    SettingRow(
+                        title = "Trade Alert Tone",
+                        subtitle = tradeAlertSoundTitle.ifEmpty { "Default System Tone" }
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            if (tradeAlertSoundUri.isNotEmpty()) {
+                                IconButton(onClick = {
+                                    viewModel.saveTradeAlertSoundUri("")
+                                    viewModel.saveTradeAlertSoundTitle("Default System Tone")
+                                }) {
+                                    Icon(Icons.Default.Clear, contentDescription = "Clear tone", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            TextButton(onClick = {
+                                val intent = android.content.Intent(android.media.RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                                    putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_TYPE, android.media.RingtoneManager.TYPE_NOTIFICATION)
+                                    putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                                    if (tradeAlertSoundUri.isNotEmpty()) {
+                                        putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, android.net.Uri.parse(tradeAlertSoundUri))
+                                    }
+                                }
+                                tradeRingtonePickerLauncher.launch(intent)
+                            }) { Text("Pick Tone") }
+                            TextButton(onClick = { tradeCustomFilePickerLauncher.launch("audio/*") }) { Text("File…") }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SectionLabel("TRADE ALERT DURATION")
+
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.xs),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Duration: ${tradeAlertRingDurationSec}s",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Slider(
+                            value = tradeAlertRingDurationSec.toFloat(),
+                            onValueChange = { viewModel.saveTradeAlertRingDurationSec(it.toInt()) },
+                            valueRange = 1f..30f,
+                            steps = 28,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                        ) {
+                            listOf(3, 5, 10, 15).forEach { sec ->
+                                OutlinedButton(
+                                    onClick = { viewModel.saveTradeAlertRingDurationSec(sec) },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                                ) { Text("${sec}s", style = MaterialTheme.typography.labelSmall) }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SectionLabel("TRADE TTS LANGUAGE")
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        listOf("en-US" to "English", "hi-IN" to "हिन्दी").forEach { (tag, label) ->
+                            FilterChip(
+                                selected = tradeAlertTtsLanguage == tag,
+                                onClick = { viewModel.saveTradeAlertTtsLanguage(tag) },
+                                label = { Text(label, style = MaterialTheme.typography.bodySmall) }
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SectionLabel("TRADE ALERT DIAGNOSTIC")
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                com.example.service.AlertSoundPlayer.playTradeSound(
+                                    context,
+                                    "Trade alert test. Position closed with profit.",
+                                    "Tone"
+                                )
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Test Tone", style = MaterialTheme.typography.labelMedium) }
+                        OutlinedButton(
+                            onClick = {
+                                com.example.service.AlertSoundPlayer.playTradeSound(
+                                    context,
+                                    "Trade alert test. Position closed with profit.",
+                                    "TTS"
+                                )
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Test TTS", style = MaterialTheme.typography.labelMedium) }
                     }
                 }
             }
@@ -993,6 +1374,115 @@ fun SettingsScreen(
                         Icon(Icons.Default.SettingsBackupRestore, null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(Spacing.xs))
                         Text("Restore Preference Defaults", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+
+        // ── V-b: Backup & Restore ─────────────────────────────────────────────
+        item {
+            var backupRestoreExpanded by remember { mutableStateOf(false) }
+
+            SettingsGroupHeader(
+                "Backup & Restore",
+                Icons.Default.CloudDone,
+                backupRestoreExpanded
+            ) { backupRestoreExpanded = !backupRestoreExpanded }
+
+            AnimatedVisibility(visible = backupRestoreExpanded) {
+                SettingCard {
+                    SectionLabel("FULL DATA BACKUP & RESTORE")
+
+                    var pendingRestoreJson by remember { mutableStateOf("") }
+                    var showRestoreDialog by remember { mutableStateOf(false) }
+                    var showResetDialog by remember { mutableStateOf(false) }
+
+                    val exportLauncher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.CreateDocument("application/json")
+                    ) { uri ->
+                        if (uri != null) scope.launch(Dispatchers.IO) {
+                            try {
+                                val json = viewModel.buildBackupJson()
+                                context.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+                                withContext(Dispatchers.Main) { Toast.makeText(context, "Backup exported successfully.", Toast.LENGTH_SHORT).show() }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) { Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_LONG).show() }
+                            }
+                        }
+                    }
+
+                    val importLauncher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.OpenDocument()
+                    ) { uri ->
+                        if (uri != null) scope.launch(Dispatchers.IO) {
+                            try {
+                                val content = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: ""
+                                withContext(Dispatchers.Main) { pendingRestoreJson = content; showRestoreDialog = true }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) { Toast.makeText(context, "Read failed: ${e.message}", Toast.LENGTH_LONG).show() }
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = { exportLauncher.launch("fintrace_backup.json") },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Export Backup")
+                    }
+
+                    OutlinedButton(
+                        onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Import / Restore")
+                    }
+
+                    TextButton(
+                        onClick = { showResetDialog = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Full Reset — Delete All Data")
+                    }
+
+                    if (showRestoreDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showRestoreDialog = false },
+                            title = { Text("Restore Backup?") },
+                            text = { Text("This will overwrite ALL current data (trades, alerts, API keys, logs, settings). This cannot be undone.") },
+                            confirmButton = {
+                                Button(onClick = {
+                                    showRestoreDialog = false
+                                    scope.launch(Dispatchers.IO) {
+                                        val result = viewModel.restoreFromJson(pendingRestoreJson)
+                                        withContext(Dispatchers.Main) { Toast.makeText(context, result, Toast.LENGTH_LONG).show() }
+                                    }
+                                }) { Text("Restore") }
+                            },
+                            dismissButton = { TextButton(onClick = { showRestoreDialog = false }) { Text("Cancel") } }
+                        )
+                    }
+
+                    if (showResetDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showResetDialog = false },
+                            title = { Text("Delete All Data?") },
+                            text = { Text("This permanently deletes all trades, orders, alerts, API keys, logs, and settings. There is no undo.") },
+                            confirmButton = {
+                                Button(
+                                    onClick = { viewModel.resetAllData(); showResetDialog = false },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                ) { Text("Delete Everything") }
+                            },
+                            dismissButton = { TextButton(onClick = { showResetDialog = false }) { Text("Cancel") } }
+                        )
                     }
                 }
             }
