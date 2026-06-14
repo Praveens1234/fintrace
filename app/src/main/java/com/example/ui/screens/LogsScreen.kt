@@ -2,9 +2,9 @@ package com.example.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.*
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -295,8 +295,8 @@ fun LogsScreen(viewModel: MainViewModel) {
                 // Collapsible search bar
                 AnimatedVisibility(
                     visible = searchVisible,
-                    enter = expandVertically(),
-                    exit = shrinkVertically()
+                    enter = expandVertically(spring(Spring.DampingRatioNoBouncy, Spring.StiffnessMediumLow)) + fadeIn(),
+                    exit = shrinkVertically(spring(Spring.DampingRatioNoBouncy, Spring.StiffnessMediumLow)) + fadeOut()
                 ) {
                     OutlinedTextField(
                         value = searchQuery,

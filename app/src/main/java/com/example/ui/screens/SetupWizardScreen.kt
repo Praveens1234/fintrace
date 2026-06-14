@@ -5,6 +5,9 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.animation.*
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import com.example.ui.animation.AnimSpec
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -85,14 +88,26 @@ fun SetupWizardScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Step Content Box
-            Box(modifier = Modifier.weight(1f)) {
-                when (currentStep) {
+            // Step Content — animated directional slide per step
+            AnimatedContent(
+                targetState = currentStep,
+                transitionSpec = {
+                    val dir = if (targetState > initialState) 1 else -1
+                    (slideInHorizontally(AnimSpec.PageSpring) { it / 3 * dir } +
+                        fadeIn(AnimSpec.FadeTween)) togetherWith
+                    (slideOutHorizontally(AnimSpec.PageSpring) { -it / 4 * dir } +
+                        fadeOut(AnimSpec.FastFade))
+                },
+                label = "wizard_step",
+                modifier = Modifier.weight(1f)
+            ) { step ->
+                when (step) {
                     1 -> StepWelcome()
                     2 -> StepProviderAndKey(viewModel)
                     3 -> StepSymbols(viewModel)
                     4 -> StepPermissions()
                     5 -> StepReady(viewModel, onSetupComplete)
+                    else -> {}
                 }
             }
 

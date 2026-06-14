@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -342,6 +343,17 @@ fun ConnectionStatusBar(
         else -> Pair(ConnectionOffline, "OFFLINE")
     }
 
+    val infiniteTransition = rememberInfiniteTransition(label = "livePulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.85f,
+        targetValue = 1.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseScale"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -357,6 +369,12 @@ fun ConnectionStatusBar(
             Box(
                 modifier = Modifier
                     .size(6.dp)
+                    .graphicsLayer {
+                        if (status == "LIVE") {
+                            scaleX = pulseScale
+                            scaleY = pulseScale
+                        }
+                    }
                     .clip(RoundedCornerShape(3.dp))
                     .background(dotColor)
             )
