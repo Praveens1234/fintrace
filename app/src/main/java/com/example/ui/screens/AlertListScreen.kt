@@ -324,7 +324,7 @@ private fun AlertSwipeDismissItem(
 
 // ─── COMPACT ALERT LIST ITEM (~72dp) ─────────────────────────────────────────
 @Composable
-private fun AlertListItem(
+internal fun AlertListItem(
     alert: Alert,
     onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit
@@ -703,4 +703,14 @@ private fun AlertEditorDialog(
             }
         }
     )
+}
+
+@Composable
+fun AlertRuleItem(
+    alert: Alert,
+    onToggleActive: (Boolean) -> Unit,
+    onDelete: () -> Unit,
+    onEditClick: () -> Unit
+) {
+    AlertListItem(alert = alert, onToggle = onToggleActive, onEdit = onEditClick)
 }
