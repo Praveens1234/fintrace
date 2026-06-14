@@ -8,22 +8,24 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 
 object AnimSpec {
-    val PageSpring = spring<Int>(
+    val PageSpring = spring<IntOffset>(
         dampingRatio = Spring.DampingRatioNoBouncy,
         stiffness = Spring.StiffnessMediumLow
     )
-    val TabSpring = spring<Int>(
+    val TabSpring = spring<IntOffset>(
         dampingRatio = Spring.DampingRatioNoBouncy,
         stiffness = Spring.StiffnessMedium
     )
-    val ExpandIntSize = spring<Int>(
+    val ExpandIntSize = spring<IntSize>(
         dampingRatio = Spring.DampingRatioNoBouncy,
         stiffness = Spring.StiffnessMediumLow
     )
     val BounceFloat = spring<Float>(
-        dampingRatio = Spring.DampingRatioLowBounce,
+        dampingRatio = Spring.DampingRatioLowBouncy,
         stiffness = Spring.StiffnessMedium
     )
     val FadeTween = tween<Float>(durationMillis = 220, easing = FastOutSlowInEasing)

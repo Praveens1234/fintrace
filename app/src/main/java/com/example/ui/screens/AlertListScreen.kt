@@ -161,7 +161,7 @@ fun AlertListScreen(viewModel: MainViewModel) {
                                 modifier = Modifier.size(16.dp)
                             )
                         },
-                        colors = ChipDefaults.suggestionChipColors(
+                        colors = SuggestionChipDefaults.suggestionChipColors(
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
                             iconContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -177,7 +177,7 @@ fun AlertListScreen(viewModel: MainViewModel) {
                                 modifier = Modifier.size(16.dp)
                             )
                         },
-                        colors = ChipDefaults.suggestionChipColors(
+                        colors = SuggestionChipDefaults.suggestionChipColors(
                             containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                             labelColor = MaterialTheme.colorScheme.onTertiaryContainer,
                             iconContentColor = MaterialTheme.colorScheme.onTertiaryContainer
