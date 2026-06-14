@@ -1550,6 +1550,7 @@ class PriceMonitorManager private constructor(context: Context) {
 
     suspend fun placeMarketOrder(symbol: String, side: String, lots: Double, entryPrice: Double, sl: Double?, tp: Double?): Boolean {
         if (lots <= 0 || entryPrice <= 0) { _tradeMessage.value = "Enter a valid lot size and entry price."; return false }
+        if (!_marketOpen.value) { _tradeMessage.value = "Market is closed. Trading resumes at next market open."; return false }
         return tradeMutex.withLock {
             val margin = TradingMath.requiredMarginUsd(symbol, lots, entryPrice, leverage, _priceState.value)
             val snap = TradingMath.accountSnapshot(openTradesCache, accountBalance, _priceState.value)
@@ -1573,6 +1574,7 @@ class PriceMonitorManager private constructor(context: Context) {
 
     suspend fun placePendingOrder(symbol: String, side: String, kind: String, lots: Double, targetPrice: Double, sl: Double?, tp: Double?): Boolean {
         if (lots <= 0 || targetPrice <= 0) { _tradeMessage.value = "Enter a valid lot size and trigger price."; return false }
+        if (!_marketOpen.value) { _tradeMessage.value = "Market is closed. Orders cannot be placed right now."; return false }
         return tradeMutex.withLock {
             val now = System.currentTimeMillis()
             val order = PendingOrder(
@@ -1591,6 +1593,7 @@ class PriceMonitorManager private constructor(context: Context) {
         tradeMutex.withLock {
             val o = db.pendingOrderDao().getById(id) ?: return@withLock
             if (o.status != "PENDING") return@withLock
+            if (!_marketOpen.value) { _tradeMessage.value = "Market is closed. Orders cannot be modified right now."; return@withLock }
             db.pendingOrderDao().update(o.copy(targetPrice = targetPrice, lots = lots, stopLoss = sl, takeProfit = tp))
             logEvent("TRADE", o.symbol, "ORDER #$id modified.")
         }
@@ -1608,6 +1611,7 @@ class PriceMonitorManager private constructor(context: Context) {
         tradeMutex.withLock {
             val t = db.tradeDao().getById(id) ?: return@withLock
             if (t.status != "OPEN") return@withLock
+            if (!_marketOpen.value) { _tradeMessage.value = "Market is closed. Trade modification is not available right now."; return@withLock }
             val newEntry = entry ?: t.entryPrice
             val newMargin = TradingMath.requiredMarginUsd(t.symbol, t.lots, newEntry, leverage, _priceState.value)
             db.tradeDao().update(t.copy(stopLoss = sl, takeProfit = tp, entryPrice = newEntry, marginUsd = newMargin))
