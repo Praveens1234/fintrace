@@ -25,6 +25,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -433,8 +434,11 @@ internal fun AlertListItem(
         "Last triggered: ${com.example.data.time.TimeFormat.format(it, tzOffset)}"
     } ?: "Never triggered"
 
+    // Composited over an opaque surface (not left as a bare 4%-alpha color) because this Row is
+    // the foreground content of a SwipeToDismissBox: a translucent background here would let the
+    // red delete backgroundContent bleed through on every row even at rest, not just mid-swipe.
     Surface(
-        color = accentColor.copy(alpha = 0.04f),
+        color = accentColor.copy(alpha = 0.04f).compositeOver(MaterialTheme.colorScheme.surface),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
