@@ -409,26 +409,29 @@ fun SymbolDetailScreen(
 
     if (showQuickCreate) {
         var targetPriceStr by remember { mutableStateOf("") }
+        val quickAlertPrice = targetPriceStr.toDoubleOrNull()
+        val quickAlertInvalid = targetPriceStr.isNotBlank() && (quickAlertPrice == null || quickAlertPrice <= 0)
         AlertDialog(
             onDismissRequest = { showQuickCreate = false },
             confirmButton = {
                 Button(
                     onClick = {
-                        val priceVal = targetPriceStr.toDoubleOrNull() ?: 0.0
-                        if (priceVal > 0) {
+                        val priceVal = quickAlertPrice
+                        if (priceVal != null && priceVal > 0) {
                             viewModel.createAlert(
                                 symbol = symbol,
                                 condition = "CROSSING",
                                 targetPrice = priceVal,
                                 title = "$symbol Crossed Target",
-                                message = "Crossing detected. Price exceeded $priceVal threshold.",
+                                message = defaultAlertMessage(symbol, "CROSSING", priceVal),
                                 isOneTime = true,
                                 priority = "HIGH",
                                 colorTagIndex = 0
                             )
                             showQuickCreate = false
                         }
-                    }
+                    },
+                    enabled = quickAlertPrice != null && quickAlertPrice > 0
                 ) {
                     Text("Save Rule")
                 }
@@ -445,7 +448,11 @@ fun SymbolDetailScreen(
                         onValueChange = { targetPriceStr = it },
                         label = { Text("Target Threshold Price") },
                         shape = RoundedCornerShape(8.dp),
-                        singleLine = true
+                        singleLine = true,
+                        isError = quickAlertInvalid,
+                        supportingText = {
+                            if (quickAlertInvalid) Text("Enter a price greater than 0")
+                        }
                     )
                 }
             }

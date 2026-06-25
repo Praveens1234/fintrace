@@ -617,7 +617,8 @@ private fun OrderTicketDialog(
     var symbolMenu by remember { mutableStateOf(false) }
 
     val lots = lotsTxt.toDoubleOrNull() ?: 0.0
-    val entry = entryTxt.toDoubleOrNull() ?: curPrice
+    val entryParsed = entryTxt.toDoubleOrNull()
+    val entry = entryParsed ?: curPrice
     val sl = slTxt.toDoubleOrNull()
     val tp = tpTxt.toDoubleOrNull()
     val factor = TradingMath.quoteToUsdFactor(symbol, priceMap) ?: 1.0
@@ -692,6 +693,10 @@ private fun OrderTicketDialog(
                     value = entryTxt, onValueChange = { entryTxt = it },
                     label = { Text(if (orderType == "Market") "Entry price (editable)" else "Trigger price") },
                     singleLine = true,
+                    isError = entryTxt.isNotBlank() && entryParsed == null,
+                    supportingText = {
+                        if (entryTxt.isNotBlank() && entryParsed == null) Text("Enter a valid price")
+                    },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -722,9 +727,9 @@ private fun OrderTicketDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), modifier = Modifier.fillMaxWidth()) {
                     TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
                     Button(
-                        onClick = { if (lots > 0 && entry > 0) onSubmit(symbol, side, orderType, lots, entry, sl, tp) },
+                        onClick = { if (lots > 0 && entry > 0 && entryParsed != null) onSubmit(symbol, side, orderType, lots, entry, sl, tp) },
                         modifier = Modifier.weight(1f),
-                        enabled = marketOpen && lots > 0 && entry > 0,
+                        enabled = marketOpen && lots > 0 && entry > 0 && entryParsed != null,
                         colors = ButtonDefaults.buttonColors(containerColor = if (side == "LONG") ProfitGreen else LossRed)
                     ) { Text(if (side == "LONG") "BUY" else "SELL") }
                 }

@@ -120,6 +120,10 @@ class PriceTrackerService : Service() {
         return START_STICKY
     }
 
+    // Synchronized because this runs on the scope's collector thread while onDestroy() (main
+    // thread) can concurrently read/release wakeLock — without this, the null-check and the
+    // !! access below are not atomic and a racing onDestroy() can null it out in between.
+    @Synchronized
     private fun synchronizeWakeLockState() {
         val screenOn = monitorManager.getScreenState()
         val alertsActive = monitorManager.getHasActiveAlerts()
@@ -168,18 +172,24 @@ class PriceTrackerService : Service() {
         return null
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
+    @Synchronized
+    private fun releaseWakeLockOnDestroy() {
         try {
             wakeLock?.let {
                 if (it.isHeld) {
                     it.release()
                 }
             }
+            wakeLock = null
             Log.d("PriceTrackerService", "WakeLock released successfully.")
         } catch (e: Exception) {
             Log.e("PriceTrackerService", "Failed to release WakeLock: ${e.message}")
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        releaseWakeLockOnDestroy()
         try {
             unregisterReceiver(screenOffReceiver)
         } catch (e: Exception) {

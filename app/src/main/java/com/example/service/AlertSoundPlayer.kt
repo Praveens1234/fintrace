@@ -12,11 +12,16 @@ import android.util.Log
 import com.example.data.repository.PriceMonitorManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
 object AlertSoundPlayer {
+    // Shared across calls instead of allocating a throwaway CoroutineScope per playAlertSound/
+    // playTradeSound invocation, so shutdown() can actually cancel in-flight settings lookups.
+    private var ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var currentRingtone: Ringtone? = null
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
@@ -88,9 +93,8 @@ object AlertSoundPlayer {
                 stopPlayback()
 
                 val monitor = PriceMonitorManager.getInstance(context)
-                val scope = CoroutineScope(Dispatchers.IO)
-                
-                scope.launch {
+
+                ioScope.launch {
                     val suffix = priority.lowercase(Locale.US)
                     val pSoundUriStr = monitor.getSetting("alert_sound_uri_$suffix")
                     val pDurationSec = monitor.getSetting("alert_ring_duration_sec_$suffix")?.toIntOrNull()
@@ -174,8 +178,7 @@ object AlertSoundPlayer {
 
                 if (playTone) {
                     val monitor = PriceMonitorManager.getInstance(context)
-                    val scope = CoroutineScope(Dispatchers.IO)
-                    scope.launch {
+                    ioScope.launch {
                         val soundUriStr = monitor.getSetting("trade_alert_sound_uri")?.takeIf { it.isNotEmpty() }
                             ?: (monitor.getSetting("alert_sound_uri") ?: "")
                         val durationSec = monitor.getSetting("trade_alert_ring_duration_sec")?.toIntOrNull()
@@ -236,6 +239,8 @@ object AlertSoundPlayer {
 
     fun shutdown() {
         stopPlayback()
+        ioScope.cancel()
+        ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         tts?.shutdown()
         tts = null
         isTtsReady = false

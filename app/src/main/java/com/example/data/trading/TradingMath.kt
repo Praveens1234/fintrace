@@ -106,8 +106,16 @@ object TradingMath {
         val units = contractSize(symbol) * lots
         // Notional in USD = units of base * (base→USD). For XXX/USD pairs base→USD == entry price.
         val baseUsd = baseToUsdFactor(symbol, priceMap) ?: run {
-            // No direct base factor; if base is USD use 1.0, else approximate with entry (USD-quoted).
-            if (baseCurrency(symbol) == "USD") 1.0 else entry
+            val baseCur = baseCurrency(symbol)
+            if (baseCur == "USD") {
+                1.0
+            } else {
+                // No direct base→USD pair cached. Derive it via the quote leg instead of using
+                // entry directly: 1 base unit = `entry` quote units, so base→USD = entry * quote→USD.
+                // Using entry alone here (as if quote were always USD) silently produced
+                // orders-of-magnitude wrong margin for cross pairs like EUR/GBP or GBP/AUD.
+                entry * (quoteToUsdFactor(symbol, priceMap) ?: 1.0)
+            }
         }
         val notionalUsd = units * baseUsd
         return notionalUsd / leverage

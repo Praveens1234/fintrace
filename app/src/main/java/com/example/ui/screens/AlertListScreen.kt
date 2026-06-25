@@ -57,7 +57,7 @@ private fun conditionText(condition: String, price: String): String = when (cond
 // Direction-aware default message, built with the symbol's own display precision so it always
 // matches the price shown elsewhere on the card (raw Double.toString() can show floating-point
 // artifacts or scientific notation, and "exceeded" is misleading for a downward cross).
-private fun defaultAlertMessage(symbol: String, condition: String, price: Double): String {
+fun defaultAlertMessage(symbol: String, condition: String, price: Double): String {
     val formatted = price.formatPriceDynamic(SymbolInfo.find(symbol).getDisplayDecimals())
     val verb = when (condition) {
         "CROSSING_UP"   -> "rose above"

@@ -5,6 +5,7 @@ import android.util.Log
 import com.example.data.repository.PriceMonitorManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 
 class FinTraceApplication : Application() {
 
@@ -25,16 +26,25 @@ class FinTraceApplication : Application() {
                 prefs.edit().putBoolean("last_session_crashed", true).commit()
 
                 val monitor = PriceMonitorManager.getInstance(applicationContext)
-                runBlocking(Dispatchers.IO) {
-                    monitor.db.appLogDao().insertLog(
-                        com.example.data.model.AppLog(
-                            type = "CRASH",
-                            symbol = null,
-                            message = "CRASH ENCOUNTERED: $crashMsg"
+                // Bounded by a timeout: if the crash happened on a thread that itself holds a DB
+                // lock or monitor needed by getInstance()/the DAO, an unbounded runBlocking here
+                // would hang the crash handler forever instead of letting the app actually crash.
+                val logged = runBlocking(Dispatchers.IO) {
+                    withTimeoutOrNull(2000L) {
+                        monitor.db.appLogDao().insertLog(
+                            com.example.data.model.AppLog(
+                                type = "CRASH",
+                                symbol = null,
+                                message = "CRASH ENCOUNTERED: $crashMsg"
+                            )
                         )
-                    )
+                    }
                 }
-                Log.d("FinTraceApplication", "Crash event logged to Room securely.")
+                if (logged != null) {
+                    Log.d("FinTraceApplication", "Crash event logged to Room securely.")
+                } else {
+                    Log.e("FinTraceApplication", "Timed out logging crash event to Room.")
+                }
             } catch (e: Exception) {
                 Log.e("FinTraceApplication", "Could not log crash to database: ${e.message}")
             }

@@ -38,6 +38,11 @@ object NotificationHelper {
     const val DEMO_NOTIFICATION_ID = 9001
 
     private var lastTickerUpdate = 0L
+    private val tradeNotifCounter = java.util.concurrent.atomic.AtomicInteger(0)
+
+    // Trade notifications used to derive their id from a timestamp modulo, which let two trades
+    // firing within the same window collide and silently overwrite each other's notification.
+    private fun nextTradeNotifId(): Int = 40000 + (tradeNotifCounter.getAndIncrement() % 10000)
 
     fun createNotificationChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -134,7 +139,7 @@ object NotificationHelper {
             putExtra("OPEN_TRADE_TAB", true)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
-        val notifId = ((System.currentTimeMillis() % 100000L).toInt()) + 40000
+        val notifId = nextTradeNotifId()
         val pendingIntent = PendingIntent.getActivity(
             context,
             notifId,

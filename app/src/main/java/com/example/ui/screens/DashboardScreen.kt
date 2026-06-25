@@ -1236,7 +1236,7 @@ fun PriceMetricClassicRow(
             Spacer(modifier = Modifier.height(2.dp))
             
             val formattedChange = tick.change.formatPriceDynamic(displayDecs)
-            val formattedPercent = String.format("%.2f%%", kotlin.math.abs(tick.changePercent))
+            val formattedPercent = String.format(java.util.Locale.US, "%.2f%%", kotlin.math.abs(tick.changePercent))
             
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (isStale) {
