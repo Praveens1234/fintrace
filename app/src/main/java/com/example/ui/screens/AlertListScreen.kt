@@ -523,14 +523,15 @@ internal fun AlertListItem(
                     Text(
                         text = lastTriggeredText,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
-                    Spacer(modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.width(Spacing.xs))
                     Switch(
                         checked = alert.isActive,
-                        onCheckedChange = onToggle,
-                        modifier = Modifier.height(24.dp)
+                        onCheckedChange = onToggle
                     )
                 }
             }
