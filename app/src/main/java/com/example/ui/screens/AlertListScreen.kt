@@ -36,6 +36,7 @@ import com.example.data.model.formatPriceDynamic
 import com.example.data.model.getDisplayDecimals
 import com.example.ui.theme.*
 import com.example.viewmodel.MainViewModel
+import kotlinx.coroutines.launch
 
 // ─── PRIORITY COLOR ──────────────────────────────────────────────────────────
 @Composable
@@ -53,20 +54,44 @@ private fun conditionText(condition: String, price: String): String = when (cond
     else            -> "⇅ crosses $price"
 }
 
+// Direction-aware default message, built with the symbol's own display precision so it always
+// matches the price shown elsewhere on the card (raw Double.toString() can show floating-point
+// artifacts or scientific notation, and "exceeded" is misleading for a downward cross).
+private fun defaultAlertMessage(symbol: String, condition: String, price: Double): String {
+    val formatted = price.formatPriceDynamic(SymbolInfo.find(symbol).getDisplayDecimals())
+    val verb = when (condition) {
+        "CROSSING_UP"   -> "rose above"
+        "CROSSING_DOWN" -> "fell below"
+        else            -> "crossed"
+    }
+    return "$symbol $verb target price of $formatted."
+}
+
 // ─── SCREEN ──────────────────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlertListScreen(viewModel: MainViewModel) {
     val alerts by viewModel.alertList.collectAsState()
     val priceState by viewModel.priceState.collectAsState()
+    val triggerHistory by viewModel.triggerHistory.collectAsState()
+    val tzOffset by viewModel.timezoneOffset.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
     var editingAlert    by remember { mutableStateOf<Alert?>(null) }
     var searchVisible   by remember { mutableStateOf(false) }
     var searchQuery     by remember { mutableStateOf("") }
     var showDeleteAllConfirm by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     val activeCount = alerts.count { it.isActive }
     val pausedCount = alerts.size - activeCount
+
+    // History is already ordered DESC by triggeredAt, so the first match per alertId is the latest.
+    val lastTriggeredByAlertId = remember(triggerHistory) {
+        val map = HashMap<Int, Long>()
+        triggerHistory.forEach { h -> map.getOrPut(h.alertId) { h.triggeredAt } }
+        map
+    }
 
     val filtered = remember(alerts, searchQuery) {
         if (searchQuery.isBlank()) alerts
@@ -78,6 +103,7 @@ fun AlertListScreen(viewModel: MainViewModel) {
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -242,10 +268,24 @@ fun AlertListScreen(viewModel: MainViewModel) {
                     items(filtered, key = { it.id }) { alert ->
                         AlertSwipeDismissItem(
                             alert = alert,
-                            onDelete = { viewModel.deleteAlert(alert.id) },
+                            onDelete = {
+                                viewModel.deleteAlert(alert.id)
+                                coroutineScope.launch {
+                                    val result = snackbarHostState.showSnackbar(
+                                        message = "Alert deleted",
+                                        actionLabel = "Undo",
+                                        duration = SnackbarDuration.Short
+                                    )
+                                    if (result == SnackbarResult.ActionPerformed) {
+                                        viewModel.restoreAlert(alert)
+                                    }
+                                }
+                            },
                             onToggle = { viewModel.toggleAlertActive(alert.id, it) },
                             onEdit   = { editingAlert = alert },
-                            currentPrice = priceState[alert.symbol]?.price
+                            currentPrice = priceState[alert.symbol]?.price,
+                            lastTriggeredAt = lastTriggeredByAlertId[alert.id],
+                            tzOffset = tzOffset
                         )
                     }
                 }
@@ -263,7 +303,7 @@ fun AlertListScreen(viewModel: MainViewModel) {
                     condition = cond,
                     targetPrice = price,
                     title = "$symbol crossed target",
-                    message = msg.ifBlank { "Crossing detected. Price exceeded $price threshold." },
+                    message = msg.ifBlank { defaultAlertMessage(symbol, cond, price) },
                     isOneTime = isOneTime,
                     priority = priority,
                     colorTagIndex = 0
@@ -284,10 +324,15 @@ fun AlertListScreen(viewModel: MainViewModel) {
                     condition = cond,
                     targetPrice = price,
                     title = "$symbol crossed target",
-                    message = msg.ifBlank { "Crossing detected. Price exceeded $price threshold." },
+                    message = msg.ifBlank { defaultAlertMessage(symbol, cond, price) },
                     isActive = editingAlert!!.isActive,
                     isOneTime = isOneTime,
-                    priority = priority
+                    priority = priority,
+                    // Preserve these — the editor UI has no fields for them, so without passing
+                    // them through explicitly, every edit would silently reset an alert's cooldown
+                    // back to the 5-minute default and wipe any expiry set via backup restore.
+                    cooldownDurationMs = editingAlert!!.cooldownDurationMs,
+                    expiry = editingAlert!!.expiry
                 )
                 editingAlert = null
             }
@@ -325,7 +370,9 @@ private fun AlertSwipeDismissItem(
     onDelete: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit,
-    currentPrice: Double? = null
+    currentPrice: Double? = null,
+    lastTriggeredAt: Long? = null,
+    tzOffset: String = "UTC"
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { it == SwipeToDismissBoxValue.EndToStart }
@@ -355,7 +402,14 @@ private fun AlertSwipeDismissItem(
             }
         }
     ) {
-        AlertListItem(alert = alert, onToggle = onToggle, onEdit = onEdit, currentPrice = currentPrice)
+        AlertListItem(
+            alert = alert,
+            onToggle = onToggle,
+            onEdit = onEdit,
+            currentPrice = currentPrice,
+            lastTriggeredAt = lastTriggeredAt,
+            tzOffset = tzOffset
+        )
     }
 }
 
@@ -365,7 +419,9 @@ internal fun AlertListItem(
     alert: Alert,
     onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit,
-    currentPrice: Double? = null
+    currentPrice: Double? = null,
+    lastTriggeredAt: Long? = null,
+    tzOffset: String = "UTC"
 ) {
     val info      = SymbolInfo.find(alert.symbol)
     val price     = alert.targetPrice.formatPriceDynamic(info.getDisplayDecimals())
@@ -373,7 +429,9 @@ internal fun AlertListItem(
     val accentColor = priorityColor(alert.priority)
     val contentAlpha = if (alert.isActive) 1f else 0.5f
 
-    val lastTriggeredText = "Never triggered"
+    val lastTriggeredText = lastTriggeredAt?.let {
+        "Last triggered: ${com.example.data.time.TimeFormat.format(it, tzOffset)}"
+    } ?: "Never triggered"
 
     Surface(
         color = accentColor.copy(alpha = 0.04f),

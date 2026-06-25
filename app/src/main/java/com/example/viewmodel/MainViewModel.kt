@@ -391,6 +391,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Re-creates an alert with its original id after an accidental swipe-to-delete (Undo). */
+    fun restoreAlert(alert: Alert) {
+        viewModelScope.launch(Dispatchers.IO) {
+            alertDao.insertAlert(alert)
+        }
+    }
+
     // ── BULK MANAGEMENT METHODS ───────────────────────────────────────────
     fun activateAllAlerts() {
         viewModelScope.launch(Dispatchers.IO) {
