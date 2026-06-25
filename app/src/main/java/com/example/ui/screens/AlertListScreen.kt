@@ -223,25 +223,28 @@ fun AlertListScreen(viewModel: MainViewModel) {
                     )
                 }
 
-                // Batch action row
+                // Batch action row — each button shares the row evenly instead of being
+                // left-packed with default button padding, which left a lopsided dead-space gap.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = Spacing.sm),
-                    horizontalArrangement = Arrangement.spacedBy(0.dp),
+                        .padding(horizontal = Spacing.xs),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = { viewModel.activateAllAlerts() }) {
-                        Text("Activate All", style = MaterialTheme.typography.labelMedium)
+                    TextButton(onClick = { viewModel.activateAllAlerts() }, modifier = Modifier.weight(1f)) {
+                        Text("Activate All", style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    TextButton(onClick = { viewModel.deactivateAllAlerts() }) {
-                        Text("Pause All", style = MaterialTheme.typography.labelMedium)
+                    TextButton(onClick = { viewModel.deactivateAllAlerts() }, modifier = Modifier.weight(1f)) {
+                        Text("Pause All", style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    TextButton(onClick = { showDeleteAllConfirm = true }) {
+                    TextButton(onClick = { showDeleteAllConfirm = true }, modifier = Modifier.weight(1f)) {
                         Text(
                             "Delete All",
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.error
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -505,27 +508,21 @@ internal fun AlertListItem(
                     }
                 }
 
-                // Current price row (shown when price data is available)
+                // Line 2: current price + last-triggered, merged into one row instead of two
+                // near-empty lines — keeps the card to two text lines instead of three so list
+                // density isn't dominated by a line that's mostly blank space.
                 val currentPriceText = currentPrice?.let {
                     val priceInfo = SymbolInfo.find(alert.symbol)
                     "Now: ${it.formatPriceDynamic(priceInfo.getDisplayDecimals())}"
-                } ?: ""
-                if (currentPriceText.isNotEmpty()) {
-                    Text(
-                        text = currentPriceText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f * contentAlpha),
-                        maxLines = 1
-                    )
                 }
+                val metaText = if (currentPriceText != null) "$currentPriceText  ·  $lastTriggeredText" else lastTriggeredText
 
-                // Line 2: last triggered text (left) + switch (right)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = lastTriggeredText,
+                        text = metaText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha),
                         maxLines = 1,
