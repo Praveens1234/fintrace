@@ -207,5 +207,8 @@ fun Double.formatPriceDynamic(decimals: Int): String {
         append("#,##0.")
         repeat(finalDecimals) { append('0') }
     }
-    return java.text.DecimalFormat(pattern).format(this)
+    // Force US symbols (".", ",") regardless of device locale — this string is shown alongside
+    // hardcoded "$" amounts elsewhere, so it must never use "," as the decimal separator (as in
+    // French/German locales) or the output would be ambiguous/inconsistent.
+    return java.text.DecimalFormat(pattern, java.text.DecimalFormatSymbols(java.util.Locale.US)).format(this)
 }

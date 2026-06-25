@@ -571,12 +571,14 @@ private fun LeverageCard(viewModel: MainViewModel, leverage: Double, snap: com.e
                 OutlinedTextField(
                     value = levText, onValueChange = { levText = it },
                     label = { Text("Leverage 1:") }, singleLine = true,
+                    supportingText = { Text("1–2000") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedTextField(
                     value = soText, onValueChange = { soText = it },
                     label = { Text("Stop-out %") }, singleLine = true,
+                    supportingText = { Text("0–100") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f)
                 )
@@ -679,6 +681,10 @@ private fun OrderTicketDialog(
                 OutlinedTextField(
                     value = lotsTxt, onValueChange = { lotsTxt = it },
                     label = { Text("Volume (lots)") }, singleLine = true,
+                    isError = lotsTxt.isNotBlank() && lots <= 0,
+                    supportingText = {
+                        if (lotsTxt.isNotBlank() && lots <= 0) Text("Enter a lot size greater than 0")
+                    },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )

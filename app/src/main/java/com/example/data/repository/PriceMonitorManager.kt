@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.content.Context
 import android.util.Log
 import androidx.room.Room
+import androidx.room.RoomDatabase
 import com.example.data.database.AppDatabase
 import com.example.data.database.MIGRATION_2_3
 import com.example.data.model.AccountSnapshot
@@ -44,34 +45,27 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.isActive
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.ConcurrentHashMap
 import com.example.data.provider.PriceProvider
 
 class PriceMonitorManager private constructor(context: Context) {
 
     private val isolatePool = IsolateWorkerPool()
 
-    private val assetExecutors = ConcurrentHashMap<String, ExecutorService>()
-    private val assetWorkerPool = ConcurrentHashMap<String, kotlinx.coroutines.CoroutineDispatcher>()
-
-    private fun getDispatcherForAsset(symbol: String): kotlinx.coroutines.CoroutineDispatcher {
-        val symKey = symbol.uppercase()
-        return assetWorkerPool.getOrPut(symKey) {
-            val executor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
-                Thread(runnable, "FinTrace-Worker-$symKey")
-            }
-            assetExecutors[symKey] = executor
-            executor.asCoroutineDispatcher()
-        }
-    }
-
     private val appContext = context.applicationContext
     val db: AppDatabase = Room.databaseBuilder(
         appContext,
         AppDatabase::class.java,
         "fintrace_database"
-    ).addMigrations(MIGRATION_2_3).fallbackToDestructiveMigration(true).build()
+    ).addMigrations(MIGRATION_2_3).fallbackToDestructiveMigration(true).addCallback(
+        object : RoomDatabase.Callback() {
+            // Surfaces an otherwise-silent data wipe: any schema version bump without a matching
+            // Migration falls back to dropping and recreating every table, losing all trades,
+            // alerts, and settings with no user-visible warning.
+            override fun onDestructiveMigration(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                Log.e("PriceMonitor", "Destructive DB migration occurred — all trading/alert data was wiped.")
+            }
+        }
+    ).build()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var connectionJob: Job? = null
@@ -328,8 +322,8 @@ class PriceMonitorManager private constructor(context: Context) {
             // Load virtual-trading account config and keep trade/order caches fresh.
             accountBalance = db.accountTransactionDao().getLatestBalance()
                 ?: (getSetting("account_balance")?.toDoubleOrNull() ?: 0.0)
-            leverage = (getSetting("account_leverage")?.toDoubleOrNull() ?: 100.0).coerceAtLeast(1.0)
-            stopoutLevel = getSetting("account_stopout_level")?.toDoubleOrNull() ?: 50.0
+            leverage = (getSetting("account_leverage")?.toDoubleOrNull() ?: 100.0).coerceIn(1.0, 2000.0)
+            stopoutLevel = (getSetting("account_stopout_level")?.toDoubleOrNull() ?: 50.0).coerceIn(0.0, 100.0)
             tradeAlertsEnabled = (getSetting("trade_alerts_enabled") ?: "true") == "true"
             tradeAlertSoundMode = getSetting("trade_alert_sound_mode") ?: "Both"
             launch {
@@ -555,17 +549,6 @@ class PriceMonitorManager private constructor(context: Context) {
         activeWebSocket = null
 
         isolatePool.shutdown()
-
-        // Shut down worker pools on stop to prevent leaking threads
-        assetExecutors.forEach { (sym, executor) ->
-            try {
-                executor.shutdown()
-            } catch (e: Exception) {
-                Log.e("PriceMonitor", "Error shutting down worker executor for $sym: ${e.message}")
-            }
-        }
-        assetExecutors.clear()
-        assetWorkerPool.clear()
     }
 
     // ── TWELVE DATA SOCKET INTEGRATION ────────────────────────────────────
@@ -1833,7 +1816,10 @@ class PriceMonitorManager private constructor(context: Context) {
     }
 
     suspend fun setLeverage(value: Double) {
-        leverage = value.coerceAtLeast(1.0)
+        // Cap at 1:2000 (the highest leverage offered by any mainstream retail broker) so a
+        // fat-fingered or malicious value can't reduce required margin to near-zero and bypass
+        // the entire risk engine.
+        leverage = value.coerceIn(1.0, 2000.0)
         saveSetting("account_leverage", leverage.toString())
         // Recompute reserved margin on open trades to reflect the new leverage.
         tradeMutex.withLock {
@@ -1847,7 +1833,9 @@ class PriceMonitorManager private constructor(context: Context) {
     }
 
     suspend fun setStopoutLevel(value: Double) {
-        stopoutLevel = value.coerceAtLeast(0.0)
+        // Cap at 100%: a stop-out level above 100% would force-close every leveraged position on
+        // the very next tick (margin level can only exceed 100% when no position is at a loss).
+        stopoutLevel = value.coerceIn(0.0, 100.0)
         saveSetting("account_stopout_level", stopoutLevel.toString())
     }
 
@@ -2056,13 +2044,86 @@ class PriceMonitorManager private constructor(context: Context) {
                 }
             }
 
+            var orderCount = 0
+            obj.optJSONArray("pendingOrders")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    db.pendingOrderDao().insert(com.example.data.model.PendingOrder(
+                        symbol = o.getString("symbol"),
+                        side = o.getString("side"),
+                        orderKind = o.getString("orderKind"),
+                        lots = o.getDouble("lots"),
+                        targetPrice = o.getDouble("targetPrice"),
+                        createdAt = o.getLong("createdAt"),
+                        status = o.getString("status"),
+                        stopLoss = if (o.has("stopLoss")) o.getDouble("stopLoss") else null,
+                        takeProfit = if (o.has("takeProfit")) o.getDouble("takeProfit") else null
+                    ))
+                    orderCount++
+                }
+            }
+
+            var txnCount = 0
+            obj.optJSONArray("accountTransactions")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val x = arr.getJSONObject(i)
+                    db.accountTransactionDao().insert(com.example.data.model.AccountTransaction(
+                        type = x.getString("type"),
+                        amount = x.getDouble("amount"),
+                        balanceAfter = x.getDouble("balanceAfter"),
+                        note = x.getString("note"),
+                        timestamp = x.getLong("timestamp"),
+                        relatedTradeId = if (x.has("relatedTradeId")) x.getInt("relatedTradeId") else null
+                    ))
+                    txnCount++
+                }
+            }
+
+            obj.optJSONArray("triggerHistory")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val h = arr.getJSONObject(i)
+                    try {
+                        db.triggerHistoryDao().insertHistory(com.example.data.model.TriggerHistory(
+                            alertId = h.getInt("alertId"),
+                            symbol = h.getString("symbol"),
+                            priceAtTrigger = h.getDouble("priceAtTrigger"),
+                            triggeredAt = h.getLong("triggeredAt"),
+                            method = h.getString("method")
+                        ))
+                    } catch (e: Exception) {}
+                }
+            }
+
+            obj.optJSONArray("logs")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val l = arr.getJSONObject(i)
+                    db.appLogDao().insertLog(com.example.data.model.AppLog(
+                        timestamp = l.getLong("timestamp"),
+                        type = l.getString("type"),
+                        message = l.getString("message"),
+                        symbol = if (l.has("symbol")) l.getString("symbol") else null
+                    ))
+                }
+            }
+
             obj.optJSONObject("settings")?.let { sObj ->
                 sObj.keys().forEach { key ->
                     db.appSettingDao().insertSetting(com.example.data.model.AppSetting(key, sObj.getString(key)))
                 }
             }
 
-            "Restored $alertCount alerts, $tradeCount trades, and settings."
+            // The DAO Flows (alerts/trades/pending orders) refresh their caches reactively, but
+            // these fields are only read once at init time, so a restore must re-sync them
+            // explicitly or the running session would keep using pre-restore values.
+            accountBalance = db.accountTransactionDao().getLatestBalance()
+                ?: (getSetting("account_balance")?.toDoubleOrNull() ?: 0.0)
+            leverage = (getSetting("account_leverage")?.toDoubleOrNull() ?: 100.0).coerceIn(1.0, 2000.0)
+            stopoutLevel = (getSetting("account_stopout_level")?.toDoubleOrNull() ?: 50.0).coerceIn(0.0, 100.0)
+            tradeAlertsEnabled = (getSetting("trade_alerts_enabled") ?: "true") == "true"
+            tradeAlertSoundMode = getSetting("trade_alert_sound_mode") ?: "Both"
+            recomputeAccount()
+
+            "Restored $alertCount alerts, $tradeCount trades, $orderCount pending orders, $txnCount transactions, and settings."
         } catch (e: Exception) {
             "Restore failed: ${e.message}"
         }
@@ -2076,6 +2137,15 @@ class PriceMonitorManager private constructor(context: Context) {
         db.accountTransactionDao().deleteAll()
         db.appSettingDao().clearSettings()
         db.appLogDao().clearAllLogs()
+
+        // Settings/transactions are gone, so the in-memory caches that were only loaded once at
+        // init time must be reset explicitly or the running session keeps showing stale values.
+        accountBalance = 0.0
+        leverage = 100.0
+        stopoutLevel = 50.0
+        tradeAlertsEnabled = true
+        tradeAlertSoundMode = "Both"
+        recomputeAccount()
     }
 
     // Settings helpers
